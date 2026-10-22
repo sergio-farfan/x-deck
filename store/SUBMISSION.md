@@ -19,7 +19,7 @@ Saves the user's deck setup (workspaces, columns, filters, settings) and the pos
 ```
 
 unlimitedStorage (only if the dashboard asks: packages from 0.1.1 on no longer request it; uploading
-the current xdeck.zip removes this field):
+the current xdeck.zip removes this field. Version 0.1.2 also drops twitter.com host access):
 ```
 Lets the user's saved-post collection grow beyond the default chrome.storage.local quota. Each saved post keeps its text, author, link, counts, tags and notes locally, and a long-running collection plus the deck setup can exceed the default limit. Data stays on the device and is never transmitted.
 ```
@@ -39,7 +39,7 @@ declarativeNetRequestWithHostAccess:
 X sends X-Frame-Options: DENY and a CSP frame-ancestors rule, which stop its pages from appearing as deck columns. While the user's deck tab (https://x.com/i/xdeck) is open, XDeck adds a session rule that removes those two response headers only for x.com pages loaded as frames by x.com, and only in that one tab (tabIds condition). The rule is removed when the tab closes or navigates away. Normal x.com tabs and all other sites keep their headers.
 ```
 
-Host permission (https://x.com/*, https://twitter.com/*):
+Host permission (https://x.com/*):
 ```
 Runs the deck at https://x.com/i/xdeck and a content script in x.com pages shown as columns, to apply the user's filters and clean-up options, count unread posts and add the save button. Also required for the header rule above. XDeck requests no other host access.
 ```

@@ -8,6 +8,8 @@
 // - Context menus: add an x.com page/link as a column, search a selection.
 
 const DECK_URL = 'https://x.com/i/xdeck';
+// twitter.com links still get the "add as column" menu (they redirect to x.com);
+// no host permission is needed for menu patterns.
 const X_PATTERNS = ['https://x.com/*', 'https://twitter.com/*'];
 
 // ---------- deck tab ----------
@@ -52,8 +54,8 @@ async function setFrameRule(tabId) {
         ],
       },
       condition: {
-        requestDomains: ['x.com', 'twitter.com'],
-        initiatorDomains: ['x.com', 'twitter.com'],
+        requestDomains: ['x.com'],
+        initiatorDomains: ['x.com'],
         resourceTypes: ['sub_frame'],
         tabIds: [tabId],
       },

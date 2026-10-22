@@ -7,7 +7,7 @@ import { h, icon, iconButton, append, clear, toast, popMenu, closeMenu, focusQui
 import { openColumnEditor, openSettings, openHelp, openRefreshDialog } from './dialogs.js';
 import { CollectionsDrawer } from './collections.js';
 
-const X_ORIGINS = new Set(['https://x.com', 'https://twitter.com']);
+const X_ORIGINS = new Set(['https://x.com']);
 const FRAME_ORIGIN = 'https://x.com';
 const FORWARD = /^(Digit[1-9]|Key[NARMCLPS]|BracketLeft|BracketRight)$/;
 const IFRAME_ALLOW = 'clipboard-read; clipboard-write; fullscreen; autoplay; encrypted-media; picture-in-picture';

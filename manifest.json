@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "XDeck",
   "short_name": "XDeck",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Multi-column deck for X: live columns, layouts, filters, keyword alerts, collections and a clean reading mode.",
   "minimum_chrome_version": "116",
   "icons": {
@@ -29,8 +29,7 @@
     "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
-    "https://x.com/*",
-    "https://twitter.com/*"
+    "https://x.com/*"
   ],
   "content_scripts": [
     {
@@ -40,7 +39,7 @@
       "run_at": "document_start"
     },
     {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "matches": ["https://x.com/*"],
       "exclude_matches": ["https://x.com/i/xdeck*"],
       "js": ["content/core.js", "content/frame.js"],
       "css": ["content/frame.css"],
@@ -50,7 +49,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/*.js", "icons/*.png"],
+      "resources": ["src/*.js", "icons/icon32.png"],
       "matches": ["https://x.com/*"]
     }
   ],

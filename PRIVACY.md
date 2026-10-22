@@ -28,7 +28,7 @@ own browser.
 - It contains no analytics, tracking, advertising or telemetry.
 - It does not read your X password, cookies or login tokens, and does not use X's API or any API
   keys. Columns are ordinary x.com pages that X shows using your existing login.
-- It does not run on websites other than x.com and twitter.com, except for one right-click menu item
+- It does not run on websites other than x.com, except for one right-click menu item
   ("Search X in XDeck") that receives only the text you select and click on.
 
 ## Notifications
