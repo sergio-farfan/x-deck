@@ -1,0 +1,18 @@
+{
+  "name": "xdeck",
+  "version": "0.1.0",
+  "private": true,
+  "description": "XDeck Chrome extension: multi-column deck for X. No build step; load the folder unpacked.",
+  "type": "module",
+  "scripts": {
+    "icons": "python3 tools/make_icons.py",
+    "test:core": "node tests/core.test.mjs",
+    "test:e2e": "node tests/e2e.test.mjs",
+    "test": "node tests/columns.test.mjs && node tests/core.test.mjs && node tests/e2e.test.mjs",
+    "zip": "zip -r xdeck.zip manifest.json background.js deck.css src content icons -x '*.DS_Store'",
+    "test:columns": "node tests/columns.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}

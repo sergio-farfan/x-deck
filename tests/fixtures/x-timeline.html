@@ -1,0 +1,150 @@
+<!doctype html>
+<!-- Minimal stand-in for x.com timeline markup (data-testid structure only),
+     served at https://x.com/* by the e2e test and used by the core unit test. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>X fixture</title>
+  <style>
+    body { margin: 0; font: 15px system-ui; background: #000; color: #e7e9ea; }
+    article { padding: 12px 16px; border-bottom: 1px solid #2f3336; }
+    [data-testid="sidebarColumn"] { width: 300px; background: #222; }
+    header[role="banner"] { width: 80px; background: #111; }
+    #layout { display: flex; }
+    main { flex: 1; display: flex; }
+    [data-testid="primaryColumn"] { max-width: 600px; width: 600px; }
+    [role="tab"][aria-selected="true"] { font-weight: 800; text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div id="react-root">
+  <div id="layout">
+    <header role="banner">nav
+      <a href="/home" data-router>Home</a>
+      <a href="/notifications" data-router>Notifications</a>
+    </header>
+    <main role="main">
+      <div><div>
+        <div data-testid="primaryColumn">
+          <div id="route" hidden></div>
+          <nav><div role="tablist">
+            <a role="tab" href="/home" aria-selected="true" id="tab-foryou">For you</a>
+            <a role="tab" href="/home" aria-selected="false" id="tab-following">Following</a>
+          </div></nav>
+          <section role="region" aria-label="Timeline: Your Home Timeline"><div id="timeline">
+
+            <!-- 1: verified reply with emoji, link, photo, quote, metrics -->
+            <div data-testid="cellInnerDiv"><div>
+              <article data-testid="tweet" role="article">
+                <div data-testid="User-Name">
+                  <a href="/bob"><span>Bob Builder</span><svg data-testid="icon-verified"></svg></a>
+                  <a href="/bob"><span>@bob</span></a>
+                  <a href="/bob/status/1001"><time datetime="2026-10-21T10:00:00.000Z">2h</time></a>
+                </div>
+                <div><div>Replying to <a href="/carol">@carol</a></div></div>
+                <div data-testid="tweetText" lang="en"><span>Hello world launch day </span><img alt="&#x1F680;"><span> see </span><a href="https://t.co/abc">example.com/x</a></div>
+                <div data-testid="tweetPhoto"><img alt=""></div>
+                <div role="link" tabindex="0">
+                  <div data-testid="User-Name"><span>Quoted Q</span><span>@qq</span><time datetime="2026-10-20T08:00:00.000Z">1d</time></div>
+                  <div data-testid="tweetText" lang="en">quoted text here</div>
+                </div>
+                <div role="group" aria-label="12 replies, 34 reposts, 1,234 likes, 5 bookmarks, 9876 views">
+                  <button data-testid="reply">12</button>
+                  <button data-testid="retweet">34</button>
+                  <button data-testid="like">1.2K</button>
+                  <div><a href="/bob/status/1001/analytics">9.8K</a></div>
+                </div>
+              </article>
+            </div></div>
+
+            <!-- 2: repost by alice, contains "spoiler" -->
+            <div data-testid="cellInnerDiv"><div>
+              <article data-testid="tweet" role="article">
+                <a href="/alice"><span data-testid="socialContext">Alice reposted</span></a>
+                <div data-testid="User-Name">
+                  <a href="/dave"><span>Dave</span></a>
+                  <a href="/dave"><span>@dave</span></a>
+                  <a href="/dave/status/1002"><time datetime="2026-10-21T09:00:00.000Z">3h</time></a>
+                </div>
+                <div data-testid="tweetText" lang="en">Big spoiler for the finale tonight</div>
+                <div role="group" aria-label="1 reply, 2 reposts, 3 likes">
+                  <button data-testid="reply">1</button><button data-testid="retweet">2</button><button data-testid="like">3</button>
+                </div>
+              </article>
+            </div></div>
+
+            <!-- 3: promoted -->
+            <div data-testid="cellInnerDiv"><div>
+              <article data-testid="tweet" role="article">
+                <div data-testid="User-Name"><a href="/brand"><span>Brand</span></a><a href="/brand"><span>@brand</span></a></div>
+                <div><span>Ad</span></div>
+                <div data-testid="tweetText" lang="en">Buy our product</div>
+                <div role="group" aria-label="5 likes"><button data-testid="like">5</button></div>
+              </article>
+            </div></div>
+
+            <!-- 4: Spanish post, no media -->
+            <div data-testid="cellInnerDiv"><div>
+              <article data-testid="tweet" role="article">
+                <div data-testid="User-Name">
+                  <a href="/eva"><span>Eva</span></a><a href="/eva"><span>@eva</span></a>
+                  <a href="/eva/status/1004"><time datetime="2026-10-21T08:00:00.000Z">4h</time></a>
+                </div>
+                <div data-testid="tweetText" lang="es">Hola a todos, it said nothing</div>
+                <div role="group" aria-label="0 replies, 0 reposts, 7 likes"><button data-testid="like">7</button></div>
+              </article>
+            </div></div>
+
+            <!-- 5-8: who to follow module -->
+            <div data-testid="cellInnerDiv"><div><h2>Who to follow</h2></div></div>
+            <div data-testid="cellInnerDiv"><div><div data-testid="UserCell">Suggested One</div></div></div>
+            <div data-testid="cellInnerDiv"><div><div data-testid="UserCell">Suggested Two</div></div></div>
+            <div data-testid="cellInnerDiv"><div><a href="/i/connect_people">Show more</a></div></div>
+
+          </div></section>
+        </div>
+        <div data-testid="sidebarColumn">sidebar</div>
+      </div></div>
+    </main>
+  </div>
+</div>
+<script nonce="xdtest">
+  // Tiny stand-in for X's router: its own links and popstate re-render the page.
+  const render = () => { document.getElementById('route').textContent = location.pathname; };
+  render();
+  for (const a of document.querySelectorAll('a[data-router]')) {
+    a.addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', a.getAttribute('href')); render(); });
+  }
+  window.addEventListener('popstate', render);
+  // On /search, show X's search tabs. Like X after an in-app navigation, open on Top whatever f= says.
+  if (location.pathname === '/search') {
+    const q = new URLSearchParams(location.search).get('q') || '';
+    const list = document.createElement('div');
+    list.setAttribute('role', 'tablist');
+    list.id = 'search-tabs';
+    for (const [label, f] of [['Top', ''], ['Latest', 'live'], ['People', 'user'], ['Media', 'media']]) {
+      const a = document.createElement('a');
+      a.setAttribute('role', 'tab');
+      a.setAttribute('href', '/search?q=' + encodeURIComponent(q) + '&src=typed_query' + (f ? '&f=' + f : ''));
+      a.setAttribute('aria-selected', String(label === 'Top'));
+      a.dataset.f = f || 'top';
+      a.textContent = label;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        for (const o of list.children) o.setAttribute('aria-selected', String(o === a));
+        history.pushState({}, '', a.getAttribute('href'));
+      });
+      list.appendChild(a);
+    }
+    document.querySelector('[data-testid="primaryColumn"]').prepend(list);
+  }
+  // Tiny stand-in for X's home tabs.
+  for (const t of document.querySelectorAll('[role="tab"]')) {
+    t.addEventListener('click', (e) => {
+      e.preventDefault();
+      for (const o of document.querySelectorAll('[role="tab"]')) o.setAttribute('aria-selected', String(o === t));
+    });
+  }
+</script>
+</body>
+</html>
