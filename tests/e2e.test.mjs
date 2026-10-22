@@ -371,7 +371,7 @@ try {
   check('keys: Alt shortcuts ignored while typing in a field', await page.locator('#composer').isHidden());
   await page.keyboard.press('Escape');
   await page.keyboard.press('Alt+KeyN');
-  check('keys: Alt+N opens the composer', await page.locator('#composer').isVisible());
+  check('keys: Alt+N opens the composer', await waitFor(() => page.locator('#composer').isVisible(), 3000));
   const composeFrame = await waitFor(async () => {
     const hnd = await page.locator('#composer iframe').elementHandle();
     const fr = hnd && await hnd.contentFrame();
