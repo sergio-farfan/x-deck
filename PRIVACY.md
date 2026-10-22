@@ -1,6 +1,6 @@
 # XDeck privacy policy
 
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 
 XDeck is a Chrome extension that shows X (x.com) as a multi-column deck. This policy explains what
 data XDeck handles and what it does with it.
@@ -36,9 +36,11 @@ own browser.
 If you turn on desktop alerts for a column, XDeck shows a notification with the new post's author and
 text. Notifications are generated locally by Chrome.
 
-## Exports
+## Exports and imports
 
-Exports (Markdown, CSV, JSON) are files that you choose to download to your own computer.
+Exports (Markdown, CSV, JSON) are files that you choose to download to your own computer. Imports read
+a JSON or CSV file that you choose, inside your browser, and add its saved posts to your local
+collection; the file is not sent anywhere.
 
 ## Deleting your data
 

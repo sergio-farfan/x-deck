@@ -40,6 +40,9 @@ jobs:
       - name: Unit tests (columns, store)
         run: npm run test:columns
 
+      - name: Unit tests (collections import)
+        run: npm run test:collections
+
       - name: Unit tests (parser, filters)
         run: npm run test:core
 

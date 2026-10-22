@@ -296,6 +296,29 @@ try {
   await page.locator('.tag-input').first().press('Enter');
   await waitFor(() => page.locator('.coll-item .tag', { hasText: '#launch' }).count(), 4000);
   check('collections: tag added', await page.locator('.coll-item .tag', { hasText: '#launch' }).count() === 1);
+  // Import: one post already saved (gets a new tag) and one new post.
+  const importFile = {
+    name: 'xdeck-collection.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify([
+      { id: '1001', url: 'https://x.com/bob/status/1001', handle: 'bob', name: 'Bob Builder', text: 'Hello world', tags: ['imported'], savedAt: '2026-10-01T00:00:00.000Z' },
+      { id: '5005', url: 'https://x.com/zoe/status/5005', handle: 'zoe', name: 'Zoe', text: 'Imported from a file', tags: ['imported'], savedAt: '2026-10-22T00:00:00.000Z' },
+      { text: 'no id, skipped' },
+    ])),
+  };
+  await page.locator('.coll-import').setInputFiles(importFile);
+  const importToast = await waitFor(() => page.locator('.toast', { hasText: 'Imported:' }).textContent(), 5000);
+  check('collections import: toast reports new, merged and skipped', /1 new, 1 merged, 1 skipped/.test(importToast || ''), String(importToast));
+  const afterImport = (await sw.evaluate(() => chrome.storage.local.get('collections'))).collections;
+  const merged1001 = afterImport.find((c) => c.id === '1001');
+  check('collections import: new post added, existing post kept with combined tags',
+    afterImport.length === 2 && afterImport.some((c) => c.id === '5005') && JSON.stringify(merged1001.tags) === JSON.stringify(['launch', 'imported']),
+    JSON.stringify(afterImport.map((c) => [c.id, c.tags])));
+  check('collections import: drawer shows the imported post', await waitFor(() => page.locator('.coll-item .coll-text', { hasText: 'Imported from a file' }).count(), 4000) === 1);
+  await page.locator('.coll-import').setInputFiles({ name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# XDeck collection') });
+  check('collections import: unsupported file refused with a message', !!(await waitFor(() => page.locator('.toast', { hasText: 'JSON or CSV' }).count(), 4000)));
+  // Back to one saved post for the checks that follow.
+  await sw.evaluate(() => chrome.storage.local.get('collections').then(({ collections }) => chrome.storage.local.set({ collections: collections.filter((c) => c.id === '1001') })));
   await page.screenshot({ path: path.join(outDir, '2-collections.png') });
   await page.keyboard.press('Escape');
 

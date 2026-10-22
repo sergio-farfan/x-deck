@@ -1,9 +1,9 @@
 // Collections drawer: posts saved with the in-column bookmark-plus button.
-// Tags, notes, search, and Markdown / CSV / JSON export.
+// Tags, notes, search, Markdown / CSV / JSON export, and JSON / CSV import.
 
 import { h, icon, iconButton, clear, relTime, downloadText, copyText, confirmDialog, toast } from './dom.js';
 import { getCollections, updateCollections } from './store.js';
-import { safeXUrl } from './columns.js';
+import { safeXUrl, cleanHandle } from './columns.js';
 
 function stamp() {
   return new Date().toISOString().slice(0, 10);
@@ -50,6 +50,138 @@ export function toCsv(items) {
   return rows.join('\r\n');
 }
 
+// ---------- import ----------
+// Reads files written by the JSON or CSV export (Markdown is for reading, not
+// for round trips). Every field is validated: the file may come from anywhere.
+
+export const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
+const IMPORT_MAX_ITEMS = 20000;
+
+// RFC 4180-style parser: quoted fields, doubled quotes, CRLF or LF line ends.
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
+      } else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Undo the export's spreadsheet-formula guard (a leading ' before = + - @).
+function unguard(v) {
+  return /^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v;
+}
+
+function str(v, max) {
+  return typeof v === 'string' ? v.slice(0, max) : v == null ? '' : String(v).slice(0, max);
+}
+
+function isoOr(v, fallback) {
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? new Date(t).toISOString() : fallback;
+}
+
+function count(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function cleanTags(v) {
+  const list = Array.isArray(v) ? v : String(v || '').split(/[\s,]+/);
+  const out = [];
+  for (const t of list) {
+    const tag = String(t).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase().slice(0, 30);
+    if (tag && !out.includes(tag)) out.push(tag);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+// One saved post from untrusted input, or null when it has no usable post id.
+export function sanitizeItem(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const fromUrl = String(raw.url || '').match(/\/status\/(\d{1,25})/);
+  const id = /^\d{1,25}$/.test(String(raw.id || '')) ? String(raw.id) : fromUrl ? fromUrl[1] : '';
+  if (!id) return null;
+  const handle = /^\w{1,15}$/.test(cleanHandle(raw.handle)) ? cleanHandle(raw.handle) : '';
+  const safe = safeXUrl(raw.url);
+  const url = safe && safe.includes(`/status/${id}`) ? safe : `https://x.com/${handle || 'i'}/status/${id}`;
+  const m = raw.metrics && typeof raw.metrics === 'object' ? raw.metrics : raw;
+  return {
+    id,
+    url,
+    handle,
+    name: str(raw.name, 100),
+    text: str(raw.text, 5000),
+    quoteText: str(raw.quoteText, 5000),
+    time: isoOr(raw.time, ''),
+    links: Array.isArray(raw.links) ? raw.links.filter((l) => typeof l === 'string' && /^https:\/\//.test(l)).slice(0, 10).map((l) => l.slice(0, 500)) : [],
+    hasMedia: raw.hasMedia === true || raw.hasMedia === 'true',
+    metrics: { likes: count(m.likes), reposts: count(m.reposts), replies: count(m.replies) },
+    savedAt: isoOr(raw.savedAt, new Date().toISOString()),
+    tags: cleanTags(raw.tags),
+    note: str(raw.note, 2000),
+    source: str(raw.source, 100),
+  };
+}
+
+// Returns { items, skipped } or throws with a message for the user.
+export function parseCollectionFile(name, text) {
+  const body = String(text || '').replace(/^\ufeff/, '');
+  const trimmed = body.trim();
+  let raws;
+  if (/\.json$/i.test(name) || /^[[{]/.test(trimmed)) {
+    let data;
+    try { data = JSON.parse(trimmed); } catch { throw new Error('That JSON file could not be read.'); }
+    raws = Array.isArray(data) ? data : data && (data.collections || data.items);
+    if (!Array.isArray(raws)) throw new Error('That JSON file has no list of saved posts.');
+  } else if (/\.csv$/i.test(name) || /^"?id"?,/.test(trimmed)) {
+    const rows = parseCsv(body).filter((r) => r.some((c) => c !== ''));
+    const header = (rows.shift() || []).map((c) => c.trim());
+    if (!header.includes('id') && !header.includes('url')) throw new Error('That CSV file has no id or url column.');
+    raws = rows.map((r) => Object.fromEntries(header.map((k, i) => [k, unguard(r[i] == null ? '' : r[i])])));
+  } else {
+    throw new Error('Use a JSON or CSV file exported from XDeck Collections.');
+  }
+  if (raws.length > IMPORT_MAX_ITEMS) throw new Error(`That file has more than ${IMPORT_MAX_ITEMS} posts.`);
+  const items = [];
+  let skipped = 0;
+  for (const r of raws) {
+    const it = sanitizeItem(r);
+    if (it) items.push(it); else skipped++;
+  }
+  return { items, skipped };
+}
+
+// Adds new posts and merges ones already saved (tags combined, an empty note
+// filled in); nothing already saved is overwritten. Newest saved first.
+export function mergeCollections(existing, incoming) {
+  const byId = new Map(existing.map((it) => [it.id, { ...it }]));
+  let added = 0;
+  let merged = 0;
+  for (const it of incoming) {
+    const cur = byId.get(it.id);
+    if (!cur) { byId.set(it.id, it); added++; continue; }
+    const tags = cleanTags([...(cur.tags || []), ...(it.tags || [])]);
+    const note = cur.note || it.note || '';
+    if (tags.length !== (cur.tags || []).length || note !== (cur.note || '')) merged++;
+    byId.set(it.id, { ...cur, tags, note });
+  }
+  const items = [...byId.values()].sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+  return { items, added, merged };
+}
+
 export class CollectionsDrawer {
   constructor({ el, openReader }) {
     this.el = el;
@@ -83,6 +215,12 @@ export class CollectionsDrawer {
 
   render() {
     clear(this.el);
+    const file = h('input', { type: 'file', accept: '.json,.csv,application/json,text/csv', hidden: true, class: 'coll-import', 'aria-label': 'Import collection file' });
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      file.value = '';
+      if (f) this.importFile(f);
+    });
     this.countEl = h('span', { class: 'muted' });
     const search = h('input', { class: 'input', type: 'search', placeholder: 'Search saved posts, @handles, #tags', value: this.query, 'aria-label': 'Search collections' });
     search.addEventListener('input', () => { this.query = search.value; this.renderList(); });
@@ -101,7 +239,9 @@ export class CollectionsDrawer {
           h('button', { type: 'button', class: 'btn btn-sm', onclick: () => this.export('md') }, icon('download', 14), ' Markdown'),
           h('button', { type: 'button', class: 'btn btn-sm', onclick: () => this.export('csv') }, icon('download', 14), ' CSV'),
           h('button', { type: 'button', class: 'btn btn-sm', onclick: () => this.export('json') }, icon('download', 14), ' JSON'),
-          h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => this.clearAll() }, 'Clear')),
+          h('button', { type: 'button', class: 'btn btn-sm', title: 'Import a JSON or CSV file exported from XDeck Collections', onclick: () => file.click() }, icon('upload', 14), ' Import'),
+          h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => this.clearAll() }, 'Clear'),
+          file),
         this.tagsEl),
       this.listEl);
     this.renderList();
@@ -189,6 +329,31 @@ export class CollectionsDrawer {
     if (kind === 'md') downloadText(`xdeck-collection-${stamp()}.md`, toMarkdown(items), 'text/markdown');
     else if (kind === 'csv') downloadText(`xdeck-collection-${stamp()}.csv`, `﻿${toCsv(items)}`, 'text/csv');
     else downloadText(`xdeck-collection-${stamp()}.json`, JSON.stringify(items, null, 2), 'application/json');
+  }
+
+  async importFile(file) {
+    if (file.size > IMPORT_MAX_BYTES) { toast('That file is too large to import (20 MB maximum)', 5000); return; }
+    let parsed;
+    try {
+      parsed = parseCollectionFile(file.name, await file.text());
+    } catch (err) {
+      toast(`Import failed: ${err.message}`, 6000);
+      return;
+    }
+    if (!parsed.items.length) { toast('No saved posts found in that file', 5000); return; }
+    let result;
+    try {
+      await updateCollections((list) => { result = mergeCollections(list, parsed.items); return result.items; });
+    } catch (err) {
+      toast(`Import failed: ${err && err.message ? err.message : err}`, 6000);
+      return;
+    }
+    const parts = [`${result.added} new`];
+    if (result.merged) parts.push(`${result.merged} merged`);
+    const same = parsed.items.length - result.added - result.merged;
+    if (same > 0) parts.push(`${same} already saved`);
+    if (parsed.skipped) parts.push(`${parsed.skipped} skipped (no post id)`);
+    toast(`Imported: ${parts.join(', ')}`, 5000);
   }
 
   async clearAll() {

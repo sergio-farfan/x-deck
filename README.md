@@ -7,7 +7,7 @@ decks, several layouts, per-column filters, keyword alerts, a reading pane, coll
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
 Better TweetDeck and Control Panel for Twitter.
 
-Author: Sergio Farfan. Version 0.1.2 ([release](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)). MIT licensed.
+Author: Sergio Farfan. Version 0.1.3 (latest release: [v0.1.2](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)). MIT licensed.
 
 XDeck is an independent, unofficial project and is not affiliated with X Corp.
 
@@ -77,8 +77,9 @@ personal profile.
 
 **Keep the folder where it is.** Chrome ties an unpacked extension's identity, and with it all of
 XDeck's stored data, to the folder's path. Moving the folder, loading it from another path, or
-switching to the Web Store version starts with empty settings. Export first (Settings > Export
-workspaces, and Collections > JSON for saved posts; collections have no import yet).
+switching to the Web Store version starts with empty settings. Export first, then import in the
+new copy: Settings > Export / Import workspaces, and Collections > JSON then Collections > Import
+for saved posts.
 
 ## Features
 
@@ -154,6 +155,9 @@ trends modules, Premium upsells and Grok buttons. Home columns open on the chron
   X bookmarks.
 - Add tags and notes, search, filter by tag, then export to Markdown, CSV or JSON. You can also copy
   a single post as Markdown.
+- **Import** a JSON or CSV export (Collections > Import), for example to move saved posts to another
+  browser or profile. Posts are matched by post ID: new ones are added, ones you already have keep
+  their note and gain any new tags, and nothing is overwritten. Markdown is for reading, not import.
 
 **Right-click menus**
 - On any x.com page or link: "Add as an XDeck column".
@@ -247,6 +251,8 @@ npm test
 
 - `tests/columns.test.mjs` unit-tests search presets, the query builder, grid rows and the one-time
   migrations of earlier defaults (no browser needed).
+- `tests/collections.test.mjs` unit-tests collections import: JSON and CSV round trips through the
+  exporters, validation of untrusted files, and merging.
 - `tests/core.test.mjs` unit-tests the parser and filter engine against `tests/fixtures/x-timeline.html`.
 - `tests/e2e.test.mjs` loads the extension in Chromium and serves X-like pages at `https://x.com/*`
   from a local HTTPS server (mapped with `--host-resolver-rules`, so Chrome's real network stack
@@ -254,11 +260,11 @@ npm test
   (`X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`). It checks the deck takeover, columns
   loading in the deck tab but not in normal tabs, pages refused even in the deck (served through the
   boot hop), first-party SameSite=Lax cookies, filters, clean mode, unread, alerts, collections,
-  reading pane, layouts and grid rows, dialogs, timed auto refresh, the single-deck rule and
+  collections import, reading pane, layouts and grid rows, dialogs, timed auto refresh, the single-deck rule and
   persistence. It needs `openssl` on the PATH. Screenshots go to `tests/out/`.
 - Real X answers headless browsers with HTTP 403, so behavior with a live, logged-in session is
   verified by hand in Chrome.
-- GitHub Actions runs all three suites on every push and pull request to `main`
+- GitHub Actions runs all four suites on every push and pull request to `main`
   (`.github/workflows/test.yml`) and keeps the screenshots and the built zip as a run artifact.
 
 ## Packaging

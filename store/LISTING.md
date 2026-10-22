@@ -39,7 +39,7 @@ STAY ON TOP OF NEW POSTS
 - Optional desktop alerts for new posts that pass a column's filters.
 
 COLLECTIONS
-- Save any post with one click, add tags and notes, search them, and export to Markdown, CSV or JSON.
+- Save any post with one click, add tags and notes, search them, export to Markdown, CSV or JSON, and import JSON or CSV exports (for example from another browser).
 
 KEYBOARD AND MENUS
 - Alt+1 to Alt+9 focus a column, then X's own keys work inside it. Shortcuts for new post, add column, search, refresh, mark read, layouts and workspaces.
