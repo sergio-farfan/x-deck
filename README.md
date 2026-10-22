@@ -1,5 +1,7 @@
 # XDeck
 
+[![Tests](https://github.com/sergio-farfan/x-deck/actions/workflows/test.yml/badge.svg)](https://github.com/sergio-farfan/x-deck/actions/workflows/test.yml)
+
 A Chrome extension that turns X (x.com) into a TweetDeck-style workstation: live multi-column
 decks, several layouts, per-column filters, keyword alerts, a reading pane, collections with
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
@@ -256,6 +258,8 @@ npm test
   persistence. It needs `openssl` on the PATH. Screenshots go to `tests/out/`.
 - Real X answers headless browsers with HTTP 403, so behavior with a live, logged-in session is
   verified by hand in Chrome.
+- GitHub Actions runs all three suites on every push and pull request to `main`
+  (`.github/workflows/test.yml`) and keeps the screenshots and the built zip as a run artifact.
 
 ## Packaging
 

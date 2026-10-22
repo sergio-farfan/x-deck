@@ -1,0 +1,60 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Check manifest and syntax
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"
+          for f in background.js src/*.js content/*.js tests/*.mjs store/*.mjs; do node --check "$f"; done
+
+      - name: Unit tests (columns, store)
+        run: npm run test:columns
+
+      - name: Unit tests (parser, filters)
+        run: npm run test:core
+
+      - name: End-to-end tests (extension in Chromium)
+        run: npm run test:e2e
+
+      - name: Package
+        run: npm run zip
+
+      - name: Upload screenshots and package
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: xdeck-test-output
+          path: |
+            tests/out/
+            xdeck.zip
+          retention-days: 14
