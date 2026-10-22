@@ -7,7 +7,7 @@ decks, several layouts, per-column filters, keyword alerts, a reading pane, coll
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
 Better TweetDeck and Control Panel for Twitter.
 
-Author: Sergio Farfan. Version 0.1.3 (latest release: [v0.1.2](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)). MIT licensed.
+Author: Sergio Farfan. Version 0.1.3 ([release](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)). MIT licensed.
 
 XDeck is an independent, unofficial project and is not affiliated with X Corp.
 
@@ -57,7 +57,7 @@ source:
 
 - **Release (easiest):** download `xdeck-<version>.zip` from the
   [latest release](https://github.com/sergio-farfan/x-deck/releases/latest) (currently
-  [v0.1.2](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)) and unzip it into a folder
+  [v0.1.3](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)) and unzip it into a folder
   you will keep.
 - **Source:** clone the repository (also needed to run the tests):
 
