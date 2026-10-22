@@ -87,15 +87,10 @@ It scales and crops to exactly 1280x800 JPEG. Make it the first screenshot in th
 ## Additional fields
 
 - **Official URL:** None. It only lists sites verified in Google Search Console; skip it.
-- **Homepage URL:** optional. Leave empty, or use the GitHub repository URL if you publish the code.
-- **Support URL:** optional. Leave empty to use the store's built-in Support tab, or use the repository's
-  Issues page.
+- **Homepage URL:** `https://github.com/sergio-farfan/x-deck`
+- **Support URL:** `https://github.com/sergio-farfan/x-deck/issues`
 - **Mature content:** off.
 
-## Still to do (other tabs)
+## Other tabs
 
-- **Privacy tab:** single purpose, a justification per permission, "no remote code", data-use
-  certifications, and a public privacy policy URL. A policy page must be hosted somewhere public
-  (GitHub Pages, a Gist, or a personal site) before you can submit.
-- **Distribution:** public, unlisted or private.
-- **Test instructions:** reviewers need a logged-in X test account to see anything.
+Privacy, Distribution and Test instructions: see `store/SUBMISSION.md`.

@@ -24,7 +24,6 @@
   },
   "permissions": [
     "storage",
-    "unlimitedStorage",
     "notifications",
     "contextMenus",
     "declarativeNetRequestWithHostAccess"

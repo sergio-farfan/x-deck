@@ -145,6 +145,7 @@ trends modules, Premium upsells and Grok buttons. Home columns open on the chron
 - **X changes its markup from time to time.** Every selector XDeck depends on lives in
   `content/core.js` (`SEL`) and `content/frame.css`. If X changes markup, filters or clean mode may
   stop matching until those are updated. The columns themselves keep working.
+- Privacy: XDeck keeps everything in your browser and sends nothing anywhere. See [PRIVACY.md](PRIVACY.md).
 - XDeck is an unofficial tool. It shows X's own pages and doesn't call X's private APIs, but X's
   terms still apply to how you use your account.
 
