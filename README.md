@@ -5,7 +5,7 @@ decks, several layouts, per-column filters, keyword alerts, a reading pane, coll
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
 Better TweetDeck and Control Panel for Twitter.
 
-Author: Sergio Farfan. Version 0.1.2. MIT licensed.
+Author: Sergio Farfan. Version 0.1.2 ([release](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)). MIT licensed.
 
 XDeck is an independent, unofficial project and is not affiliated with X Corp.
 
@@ -50,14 +50,23 @@ XDeck asks for the minimum it needs:
 
 ## Install
 
-Until the Chrome Web Store listing is live, install from source:
+Until the Chrome Web Store listing is live, install it unpacked, either from a release or from
+source:
 
-```bash
-git clone https://github.com/sergio-farfan/x-deck.git
-```
+- **Release (easiest):** download `xdeck-<version>.zip` from the
+  [latest release](https://github.com/sergio-farfan/x-deck/releases/latest) (currently
+  [v0.1.2](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2)) and unzip it into a folder
+  you will keep.
+- **Source:** clone the repository (also needed to run the tests):
+
+  ```bash
+  git clone https://github.com/sergio-farfan/x-deck.git
+  ```
+
+Then:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
-2. Click **Load unpacked** and select the `x-deck` folder.
+2. Click **Load unpacked** and select the unzipped folder (or the cloned `x-deck` folder).
 3. Pin XDeck to the toolbar. Click the icon, press **Alt+Shift+X**, or visit `https://x.com/i/xdeck`.
 4. If columns ask you to sign in, log in to x.com once in a normal tab, then press Refresh (Alt+R).
 
