@@ -81,14 +81,12 @@ https://github.com/sergio-farfan/x-deck/blob/main/PRIVACY.md
 
 ## Test instructions tab
 
+The field is limited to 500 characters (this text is 469). Put the X test account's username and
+password in the separate credential fields on the same tab.
+
 ```
-XDeck needs a logged-in X (x.com) account; without one the columns show X's sign-in page.
-
-1. Sign in to x.com in a normal tab with a test account.
-2. Click the XDeck toolbar icon (or open https://x.com/i/xdeck). The deck opens with two workspaces: "Main" (Home, Notifications, Mentions, Bookmarks) and "News" (two searches and two Explore columns, shown as a grid).
-3. Try: Columns/Grid/Tabs in the top bar; the timer icon (auto refresh for the workspace) and the pause button next to it; the + button to add a column (e.g. Search); the sliders icon on a column header for filters; the bookmark-plus button in a post's action bar, then the bookmark icon in the left rail (Collections); press ? for keyboard shortcuts.
-
-About the header rule: while the deck tab is open, XDeck removes X-Frame-Options and CSP only from x.com pages framed by x.com in that tab (session rule with a tabIds condition), so X's own pages can appear as columns. Open any other x.com tab to confirm its headers are untouched.
-
-XDeck sends no data anywhere; all storage is chrome.storage.local.
+Needs a logged-in X account: sign in at x.com first (test login in the fields above).
+1. Click the XDeck icon or open https://x.com/i/xdeck. Workspaces Main and News load.
+2. Try Columns/Grid/Tabs, + (add column), a column's sliders (filters), the save button on a post, the timer icon, and ? for shortcuts.
+Header rule: only in the deck tab, XDeck removes X-Frame-Options/CSP from x.com frames so columns can load; other tabs are untouched. No data leaves the browser.
 ```
