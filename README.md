@@ -5,7 +5,9 @@ decks, several layouts, per-column filters, keyword alerts, a reading pane, coll
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
 Better TweetDeck and Control Panel for Twitter.
 
-Author: Sergio Farfan
+Author: Sergio Farfan. Version 0.1.2. MIT licensed.
+
+XDeck is an independent, unofficial project and is not affiliated with X Corp.
 
 ## How it works
 
@@ -28,24 +30,55 @@ Author: Sergio Farfan
 - An in-column script adds what X lacks: filters, unread tracking, alerts, the save-to-collection
   button and click-to-reading-pane. Everything XDeck stores stays in `chrome.storage.local` on your
   machine. Nothing is sent anywhere else.
+- One deck at a time: opening the deck in a second tab pauses the first (with a "Use this tab"
+  button), so two decks never overwrite each other's workspaces.
 
-## Install (unpacked)
+## Permissions
+
+XDeck asks for the minimum it needs:
+
+| Permission | Used for |
+|---|---|
+| `storage` | Your workspaces, columns, filters, settings and saved posts, kept in the browser. |
+| `notifications` | Optional desktop alerts for new posts, off until you turn them on for a column. |
+| `contextMenus` | The right-click items "Add as an XDeck column" and "Search X in XDeck". |
+| `declarativeNetRequestWithHostAccess` | The deck-tab-only header rule described above. Shows no install warning. |
+| Host access to `https://x.com/*` | Running the deck and the in-column script on x.com. No other sites. |
+
+`twitter.com` is not requested: it redirects every request to x.com. XDeck does not use `tabs`,
+`cookies`, `webRequest`, `scripting`, `downloads` or access to all sites.
+
+## Install
+
+Until the Chrome Web Store listing is live, install from source:
+
+```bash
+git clone https://github.com/sergio-farfan/x-deck.git
+```
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
-2. Click **Load unpacked** and select this folder (`x-deck`).
+2. Click **Load unpacked** and select the `x-deck` folder.
 3. Pin XDeck to the toolbar. Click the icon, press **Alt+Shift+X**, or visit `https://x.com/i/xdeck`.
 4. If columns ask you to sign in, log in to x.com once in a normal tab, then press Refresh (Alt+R).
 
 On a managed (corporate) Chrome profile, a policy may block unpacked extensions. If so, use a
 personal profile.
 
+**Keep the folder where it is.** Chrome ties an unpacked extension's identity, and with it all of
+XDeck's stored data, to the folder's path. Moving the folder, loading it from another path, or
+switching to the Web Store version starts with empty settings. Export first (Settings > Export
+workspaces, and Collections > JSON for saved posts; collections have no import yet).
+
 ## Features
 
 **Deck and layouts**
 - Multiple workspaces (for example "Main" and "News"). Rename, duplicate, reorder, import/export.
-- Layouts: **Columns** (classic horizontal deck, per-column width), **Grid** (Auto rows by default: 1 row
-  up to 3 columns, 2 rows up to 8, then 3; or pick 1 to 4 rows yourself. Fills the screen, good as a
-  news wall. A single row of four looks the same as Columns, which is why Auto adds rows), **Tabs** (one large column at a time; good on a laptop).
+- Layouts:
+  - **Columns:** the classic horizontal deck, with a width per column.
+  - **Grid:** fills the screen, good as a news wall. Rows are Auto by default (1 row up to 3
+    columns, 2 rows up to 8, then 3), or pick 1 to 4 rows. A single row of four would look the same
+    as Columns, which is why Auto adds rows.
+  - **Tabs:** one large column at a time, good on a laptop.
 - Drag column headers to reorder. Reordering and switching layouts never reload columns.
 - **Reading pane**: when it's on, clicking a post opens the thread on the right while the column
   keeps its scroll position. The pane is resizable.
@@ -60,7 +93,8 @@ sports, entertainment), Messages, Community, Likes, Grok, and any x.com URL.
 - Quick search in the top bar: Enter adds a "Latest" search column. Paste an x.com URL to add that
   page as a column.
 - Advanced search builder: all/any/none words, exact phrase, hashtags, from/to/mentioning, list
-  members, language, minimum likes/reposts/replies, news links, media, verified, date range.
+  members, language, minimum likes/reposts/replies, major news sites, X's own news filter, media,
+  verified, date range.
 - Presets: Breaking news, News links, Viral now, AI news, Media only. The news presets match links
   from eight major outlets by domain (`url:reuters.com OR url:apnews.com ...`). X's own
   `filter:news` returned nothing in a live test, so XDeck no longer uses it by default; it is still
@@ -139,7 +173,7 @@ trends modules, Premium upsells and Grok buttons. Home columns open on the chron
 - **Memory.** Each column is a full x.com page. "Load columns only when they scroll into view" is on
   by default, and other workspaces are unloaded when you switch away (unless you enable "Keep other
   workspaces running").
-- **Alerts and unread counts need the deck tab open.** It can be in the background.
+- **Alerts, unread counts and auto refresh need the deck tab open.** It can be in the background.
 - **Columns use X's theme and font size** (x.com > Settings > Accessibility, display and languages >
   Display). Use Cmd/Ctrl + and - to zoom the whole deck.
 - **X changes its markup from time to time.** Every selector XDeck depends on lives in
@@ -177,7 +211,10 @@ src/dialogs.js         add/edit column, settings, help
 src/collections.js     collections drawer and exports
 src/dom.js             DOM helpers (no innerHTML), icons, dialogs, menus, toasts
 tools/make_icons.py    regenerates icons/ (no dependencies)
-tests/                 Playwright unit and end-to-end tests with an X markup fixture
+tests/                 unit tests and Playwright end-to-end tests with an X markup fixture
+store/                 Chrome Web Store listing text, submission notes, image generator, images
+PRIVACY.md             privacy policy (linked from the store listing)
+LICENSE                MIT
 ```
 
 There is no build step: edit the files, then click the reload icon for XDeck on
@@ -197,14 +234,17 @@ npx playwright install chromium
 npm test
 ```
 
+- `tests/columns.test.mjs` unit-tests search presets, the query builder, grid rows and the one-time
+  migrations of earlier defaults (no browser needed).
 - `tests/core.test.mjs` unit-tests the parser and filter engine against `tests/fixtures/x-timeline.html`.
 - `tests/e2e.test.mjs` loads the extension in Chromium and serves X-like pages at `https://x.com/*`
   from a local HTTPS server (mapped with `--host-resolver-rules`, so Chrome's real network stack
   and the extension's header rule are exercised). Pages carry logged-in X's framing headers
   (`X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`). It checks the deck takeover, columns
-  loading in the deck tab but not in normal tabs, first-party SameSite=Lax cookies, filters, clean
-  mode, unread, alerts, collections, reading pane, layouts, dialogs and persistence. It needs
-  `openssl` on the PATH. Screenshots go to `tests/out/`.
+  loading in the deck tab but not in normal tabs, pages refused even in the deck (served through the
+  boot hop), first-party SameSite=Lax cookies, filters, clean mode, unread, alerts, collections,
+  reading pane, layouts and grid rows, dialogs, timed auto refresh, the single-deck rule and
+  persistence. It needs `openssl` on the PATH. Screenshots go to `tests/out/`.
 - Real X answers headless browsers with HTTP 403, so behavior with a live, logged-in session is
   verified by hand in Chrome.
 
@@ -215,7 +255,16 @@ npm run zip
 ```
 
 This creates `xdeck.zip` with only the extension files, ready for the Chrome Web Store or for
-sharing.
+sharing. Bump `version` in `manifest.json` (and `package.json`) before each store upload.
+
+Chrome Web Store material lives in `store/`:
+
+- `store/LISTING.md`: description, category, language, URLs and which image goes where.
+- `store/SUBMISSION.md`: Privacy tab text (single purpose, a justification per permission, data
+  use), Distribution and Test instructions.
+- `node store/make-assets.mjs` regenerates the store icon, promo tiles and four UI screenshots in
+  `store/out/` from the real extension, using an empty workspace and fictional saved posts.
+- `store/fit-screenshot.sh <file>` turns your own screenshot into a 1280x800 store screenshot.
 
 ## License
 
