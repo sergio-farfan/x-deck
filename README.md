@@ -216,3 +216,7 @@ npm run zip
 
 This creates `xdeck.zip` with only the extension files, ready for the Chrome Web Store or for
 sharing.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

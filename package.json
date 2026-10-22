@@ -14,5 +14,6 @@
   },
   "devDependencies": {
     "playwright": "^1.56.0"
-  }
+  },
+  "license": "MIT"
 }
