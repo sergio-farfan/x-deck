@@ -18,6 +18,12 @@ storage:
 Saves the user's deck setup (workspaces, columns, filters, settings) and the posts the user chooses to save, locally in chrome.storage.local. Nothing is sent off the device.
 ```
 
+unlimitedStorage (only if the dashboard asks: packages from 0.1.1 on no longer request it; uploading
+the current xdeck.zip removes this field):
+```
+Lets the user's saved-post collection grow beyond the default chrome.storage.local quota. Each saved post keeps its text, author, link, counts, tags and notes locally, and a long-running collection plus the deck setup can exceed the default limit. Data stays on the device and is never transmitted.
+```
+
 notifications:
 ```
 Shows an optional desktop alert when a new post appears in a column for which the user turned alerts on. Off by default; enabled per column by the user.
