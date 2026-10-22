@@ -70,12 +70,11 @@ LIMITS
 |---|---|---|
 | Store icon (128x128) | `store/out/icon-128.png` | 96x96 artwork with 16 px transparent padding, per the image guidelines |
 | Global promo video | leave empty | optional |
-| Screenshots (1280x800, up to 5) | `screenshot-1-add-search-column.jpg`, `screenshot-2-settings-clean-x.jpg`, `screenshot-3-collections.jpg`, `screenshot-4-shortcuts.jpg` | Generated from the real extension with an empty workspace and fictional saved posts |
-| Screenshot 5 (recommended) | your own: see below | Shows real columns, the most persuasive image |
+| Screenshots (1280x800, up to 5) | Upload in this order: `screenshot-5-columns.jpg` (real News workspace, public posts), `screenshot-1-add-search-column.jpg`, `screenshot-2-settings-clean-x.jpg`, `screenshot-3-collections.jpg`, `screenshot-4-shortcuts.jpg` | 1-4 are generated from the real extension with an empty workspace and fictional saved posts |
 | Small promo tile (440x280) | `store/out/promo-small-440x280.jpg` | |
 | Marquee promo tile (1400x560) | `store/out/promo-marquee-1400x560.jpg` | optional; needed only for featured placement |
 
-**Screenshot 5 (real columns):** open the News workspace (public news posts, nothing personal), take a
+**Replacing screenshot 5 (real columns):** open the News workspace (public news posts, nothing personal), take a
 screenshot of the browser page with Cmd+Shift+4 (drag over the page area), then run:
 
 ```bash
