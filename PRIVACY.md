@@ -1,6 +1,6 @@
 # XDeck privacy policy
 
-Last updated: 2026-10-22
+Last updated: 2026-10-23
 
 XDeck is a Chrome extension that shows X (x.com) as a multi-column deck. This policy explains what
 data XDeck handles and what it does with it.
@@ -30,6 +30,14 @@ own browser.
   keys. Columns are ordinary x.com pages that X shows using your existing login.
 - It does not run on websites other than x.com, except for one right-click menu item
   ("Search X in XDeck") that receives only the text you select and click on.
+
+## Chrome Web Store statistics
+
+The Chrome Web Store, operated by Google, gives the developer aggregate statistics about XDeck's store
+listing, such as listing page views and installs, including through Google Analytics. These
+statistics come from the Chrome Web Store website and its install process, not from XDeck, and the
+developer receives no data about individual users. Google's privacy policy covers that data. XDeck
+itself collects nothing.
 
 ## Notifications
 
