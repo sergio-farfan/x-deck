@@ -7,6 +7,8 @@ decks, several layouts, per-column filters, keyword alerts, a reading pane, coll
 export, and a "clean X" mode. It brings together the most useful ideas from TweetDeck / X Pro,
 Better TweetDeck and Control Panel for Twitter.
 
+**[Install XDeck from the Chrome Web Store](https://chromewebstore.google.com/detail/xdeck/bhbnoiglolaljelapgkljofdbcfaclcl)**
+
 Author: Sergio Farfan. Version 0.1.3 ([release](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)). MIT licensed.
 
 XDeck is an independent, unofficial project and is not affiliated with X Corp.
@@ -52,10 +54,18 @@ XDeck asks for the minimum it needs:
 
 ## Install
 
-Until the Chrome Web Store listing is live, install it unpacked, either from a release or from
-source:
+### Chrome Web Store (recommended)
 
-- **Release (easiest):** download `xdeck-<version>.zip` from the
+1. Open [XDeck on the Chrome Web Store](https://chromewebstore.google.com/detail/xdeck/bhbnoiglolaljelapgkljofdbcfaclcl) and click **Add to Chrome**.
+2. Pin XDeck to the toolbar. Click the icon, press **Alt+Shift+X**, or visit `https://x.com/i/xdeck`.
+3. If columns ask you to sign in, log in to x.com once in a normal tab, then press Refresh (Alt+R).
+
+The store version updates itself. A new version can reach GitHub releases a few days before the
+store, because Chrome reviews every update.
+
+### Unpacked (newest version, or for development)
+
+- **Release:** download `xdeck-<version>.zip` from the
   [latest release](https://github.com/sergio-farfan/x-deck/releases/latest) (currently
   [v0.1.3](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)) and unzip it into a folder
   you will keep.
@@ -69,17 +79,22 @@ Then:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and select the unzipped folder (or the cloned `x-deck` folder).
-3. Pin XDeck to the toolbar. Click the icon, press **Alt+Shift+X**, or visit `https://x.com/i/xdeck`.
-4. If columns ask you to sign in, log in to x.com once in a normal tab, then press Refresh (Alt+R).
+3. Open the deck as above.
 
 On a managed (corporate) Chrome profile, a policy may block unpacked extensions. If so, use a
-personal profile.
+personal profile or the store version.
 
 **Keep the folder where it is.** Chrome ties an unpacked extension's identity, and with it all of
-XDeck's stored data, to the folder's path. Moving the folder, loading it from another path, or
-switching to the Web Store version starts with empty settings. Export first, then import in the
-new copy: Settings > Export / Import workspaces, and Collections > JSON then Collections > Import
-for saved posts.
+XDeck's stored data, to the folder's path. Moving the folder or loading it from another path starts
+with empty settings.
+
+### Use one copy at a time
+
+The store version and an unpacked copy are separate extensions with separate data. With both
+enabled, both try to take over `x.com/i/xdeck` and get in each other's way, so keep only one enabled
+in `chrome://extensions`. To move your setup from one to the other, export it first and import it
+in the other copy: Settings > Export / Import workspaces, and Collections > JSON then
+Collections > Import for saved posts.
 
 ## Features
 
