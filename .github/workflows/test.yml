@@ -37,6 +37,9 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"
           for f in background.js src/*.js content/*.js tests/*.mjs store/*.mjs; do node --check "$f"; done
 
+      - name: Package check (every referenced file exists and is tracked)
+        run: npm run check
+
       - name: Unit tests (columns, store)
         run: npm run test:columns
 

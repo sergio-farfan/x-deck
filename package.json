@@ -8,10 +8,11 @@
     "icons": "python3 tools/make_icons.py",
     "test:core": "node tests/core.test.mjs",
     "test:e2e": "node tests/e2e.test.mjs",
-    "test": "node tests/columns.test.mjs && node tests/collections.test.mjs && node tests/core.test.mjs && node tests/e2e.test.mjs",
+    "test": "node tools/check-package.mjs && node tests/columns.test.mjs && node tests/collections.test.mjs && node tests/core.test.mjs && node tests/e2e.test.mjs",
     "zip": "zip -r xdeck.zip manifest.json background.js deck.css src content icons -x '*.DS_Store'",
     "test:columns": "node tests/columns.test.mjs",
-    "test:collections": "node tests/collections.test.mjs"
+    "test:collections": "node tests/collections.test.mjs",
+    "check": "node tools/check-package.mjs"
   },
   "devDependencies": {
     "playwright": "^1.56.0"
