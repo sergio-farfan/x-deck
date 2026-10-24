@@ -1,10 +1,10 @@
 # Chrome Web Store: Privacy, Distribution and Test instructions tabs
 
 Store listing text and images: see `store/LISTING.md` and `store/out/`.
-Package to upload: `xdeck.zip`, version 0.1.2 (build with `npm run zip`; the same files are in the
-GitHub release https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.2).
+Package to upload: `xdeck.zip` at the version in `manifest.json` (build with `npm run zip`; each
+GitHub release at https://github.com/sergio-farfan/x-deck/releases carries the same files).
 
-Version 0.1.2 requests: storage, notifications, contextMenus, declarativeNetRequestWithHostAccess, and
+Every version since 0.1.2 requests: storage, notifications, contextMenus, declarativeNetRequestWithHostAccess, and
 host access to https://x.com/* only. If the dashboard shows any other permission (unlimitedStorage,
 twitter.com), an older package is still uploaded: upload the current zip on the Package tab.
 
@@ -35,7 +35,7 @@ Adds right-click items: "Add this page as an XDeck column" on x.com pages, "Add 
 
 declarativeNetRequestWithHostAccess:
 ```
-X sends X-Frame-Options: DENY and a CSP frame-ancestors rule, which stop its pages from appearing as deck columns. While the user's deck tab (https://x.com/i/xdeck) is open, XDeck adds a session rule that removes those two response headers only for x.com pages loaded as frames by x.com, and only in that one tab (tabIds condition). The rule is removed when the tab closes or navigates away. Normal x.com tabs and all other sites keep their headers.
+X sends X-Frame-Options: DENY and a Content-Security-Policy with frame-ancestors, which stop its pages from appearing as deck columns. While the user's deck tab (https://x.com/i/xdeck) is open, XDeck adds a session rule that removes the X-Frame-Options header and the whole Content-Security-Policy header (Chrome's header rules can only remove or replace a header, not edit part of it) only for x.com pages loaded as frames by x.com, and only in that one tab (tabIds condition). The deck page itself keeps its headers. The rule is removed when the tab closes or navigates away. Normal x.com tabs and all other sites keep their headers.
 ```
 
 Host permission (https://x.com/*):

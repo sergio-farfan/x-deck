@@ -15,8 +15,10 @@ own browser.
 - **Your deck setup:** workspaces, columns, filters and settings. Stored in your browser with the
   Chrome storage API (`chrome.storage.local`).
 - **Posts you choose to save:** when you click XDeck's save button on a post, XDeck stores that
-  post's text, author name and handle, link, time and counts (likes, reposts, replies), plus any tags
-  and notes you add. Stored in `chrome.storage.local`.
+  post's text, author name and handle, link, time, the text of a post it quotes, links in it, whether
+  it has media, its counts (likes, reposts, replies, bookmarks, views), when you saved it and which
+  column it came from (the column's name, which for a search column is its search query), plus any
+  tags and notes you add. Stored in `chrome.storage.local` and included in exports.
 - **Content of x.com pages shown in the deck:** XDeck reads the posts displayed in its columns,
   inside your browser, to apply your filters, hide items you chose to hide, count unread posts and
   show the alerts you turned on. This content is processed on the fly and is not stored, except for
@@ -28,8 +30,12 @@ own browser.
 - It contains no analytics, tracking, advertising or telemetry.
 - It does not read your X password, cookies or login tokens, and does not use X's API or any API
   keys. Columns are ordinary x.com pages that X shows using your existing login.
-- It does not run on websites other than x.com, except for one right-click menu item
-  ("Search X in XDeck") that receives only the text you select and click on.
+- It does not run on websites other than x.com. Two right-click menu items can appear on other sites:
+  "Search X in XDeck" for text you select, and "Add link as an XDeck column" for links that point to
+  x.com or twitter.com. They receive only the selected text or the link you click on. That text or
+  link is written to your browser's storage until the deck handles it. A search you start that way
+  becomes a column that is saved with your workspaces and, like any search column, sends its query
+  to X each time it loads or refreshes.
 
 ## Chrome Web Store statistics
 

@@ -49,7 +49,7 @@ PRIVACY
 - XDeck keeps its settings, workspaces and saved posts only in your browser. It sends nothing to the developer or to any third party, contains no analytics or tracking, and does not use X's API or any API keys.
 
 HOW IT WORKS
-- The deck opens at x.com/i/xdeck. To show X's own pages as columns, XDeck removes X's anti-framing headers from x.com pages loaded inside that deck tab only, and only while it is open. Normal x.com tabs and all other websites are not affected.
+- The deck opens at x.com/i/xdeck. To show X's own pages as columns, XDeck removes X's X-Frame-Options and Content-Security-Policy response headers from x.com pages loaded as frames inside that deck tab only, and only while it is open. Normal x.com tabs and all other websites are not affected.
 
 LIMITS
 - One X account at a time: all columns share your browser's X login.

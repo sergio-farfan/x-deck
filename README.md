@@ -23,9 +23,12 @@ XDeck is an independent, unofficial project and is not affiliated with X Corp.
 - Because the deck and its columns are all x.com pages, X's login cookies work first-party. XDeck
   needs no X API key and costs nothing to run.
 - X tells browsers not to show its pages inside frames (`X-Frame-Options: DENY` for logged-in
-  sessions). While the deck tab is open, XDeck removes those anti-framing headers only from x.com
-  pages that x.com itself loads in a frame, and only in that one tab. The rule is added when the
-  deck opens and removed when the tab closes or navigates away. Normal x.com tabs and every other
+  sessions). While the deck tab is open, XDeck removes two response headers, `X-Frame-Options` and
+  `Content-Security-Policy`, only from x.com pages that x.com itself loads in a frame, and only in
+  that one tab. The whole CSP header goes, not just its `frame-ancestors` part, because Chrome's
+  header rules can only remove or replace a header, not edit it. So pages framed in the deck tab
+  lose X's CSP for as long as the rule is active. The rule is added when the deck opens and removed
+  when the tab closes or navigates away. Normal x.com tabs, the deck page itself and every other
   site keep their headers.
 - Some pages (seen for Home and Notifications in a logged-in session) are still refused when loaded
   directly into a frame. XDeck then opens them through a small hop (`/i/xdk-boot?go=/home`) and
@@ -100,6 +103,9 @@ Collections > Import for saved posts.
 
 **Deck and layouts**
 - Multiple workspaces (for example "Main" and "News"). Rename, duplicate, reorder, import/export.
+  Importing a workspace file shows what it will change (counts, settings, alert columns, regex
+  filters) before replacing anything, keeps an Undo for 12 seconds, regenerates ids and caps size
+  (1 MB, 20 workspaces, 50 columns each, alerts on 5 columns, refresh at least 15 s).
 - Layouts:
   - **Columns:** the classic horizontal deck, with a width per column.
   - **Grid:** fills the screen, good as a news wall. Rows are Auto by default (1 row up to 3
@@ -131,7 +137,10 @@ sports, entertainment), Messages, Community, Likes, Grok, and any x.com URL.
 
 **Filters (per column, applied live)**
 - Must include / exclude words (comma or newline separated, `/regex/` supported, word-boundary
-  matching), exclude accounts (also hides their reposts), languages.
+  matching). Regular expressions must be short and simple (200 characters; no group that repeats a
+  repeat or an alternation such as `(a+)+` or `(a|b)+`, no backreferences, at most two unbounded
+  repeats) because a slow pattern would freeze the deck; unsafe ones are refused when you save and
+  skipped if they arrive any other way. A term like `/r/politics` is a plain word, exclude accounts (also hides their reposts), languages.
 - Only media, only links, only verified, hide verified, hide replies, hide reposts, hide quotes.
 - Minimum likes / reposts / replies.
 - Hide posts already shown in another column of the workspace (de-duplication).
