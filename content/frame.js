@@ -46,7 +46,7 @@
     markApplied: false,
     searchTabDone: false,
     settleUntil: 0,                   // ignore posts for unread/ownership until X finishes switching tabs
-    armed: false,
+    _armed: false,
     armTimer: null,
     dupIds: new Set(),
     hovered: false,
@@ -58,6 +58,12 @@
     observer: null,
     navTimer: null,
   };
+  // `armed` mirrors to an attribute on <html> so tests (and anyone debugging) can see when new
+  // posts start to count; nothing else reads the attribute.
+  Object.defineProperty(state, 'armed', {
+    get() { return this._armed; },
+    set(v) { this._armed = !!v; root.toggleAttribute('data-xd-armed', !!v); },
+  });
 
   syncRootClasses();
 

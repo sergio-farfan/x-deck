@@ -211,13 +211,36 @@ try {
   // A normal x.com tab keeps X's protection: its x.com iframes stay blocked.
   const normal = await context.newPage();
   await normal.goto('https://x.com/explore', { waitUntil: 'domcontentloaded' });
-  await normal.evaluate(() => { const f = document.createElement('iframe'); f.src = 'https://x.com/home'; document.body.appendChild(f); });
-  await sleep(3000);
+  await sleep(800);
+  // By default XDeck does nothing in a normal x.com tab.
+  const idle = await normal.evaluate(() => ({ clean: document.documentElement.classList.contains('xdeck-clean'), marks: document.querySelectorAll('[data-xd-kind],[data-xd-hide],.xd-collect').length }));
+  check('normal tab: XDeck does nothing by default (no clean mode, marks or buttons)', !idle.clean && idle.marks === 0, JSON.stringify(idle));
+  // A page the server serves normally (not one it drops), so only the headers decide: the deck's
+  // frames get it, a normal tab's frame is blocked by X-Frame-Options.
+  await normal.evaluate(() => { const f = document.createElement('iframe'); f.src = 'https://x.com/explore'; document.body.appendChild(f); });
+  await sleep(2500);
   const normalChild = normal.frames().find((f) => f !== normal.mainFrame());
-  let normalFramed = false;
-  try { normalFramed = await normalChild.evaluate(() => !!document.querySelector('[data-testid="cellInnerDiv"]')); } catch { normalFramed = false; }
-  check('security: x.com stays unframeable in normal tabs', !normalFramed, normalChild ? normalChild.url() : 'no frame');
+  check('security: x.com stays unframeable in normal tabs (the child ends on the browser error page)', !!normalChild && normalChild.url().startsWith('chrome-error:'), normalChild ? normalChild.url() : 'no frame');
+  // Opt in to clean mode on normal tabs, then out again: both must take effect live.
+  const setClean = (on) => sw.evaluate(async (v) => { const { settings = {} } = await chrome.storage.local.get('settings'); await chrome.storage.local.set({ settings: { ...settings, cleanRegularTabs: v } }); }, on);
+  await setClean(true);
+  const optedIn = await waitFor(() => normal.evaluate(() => document.documentElement.classList.contains('xdeck-clean') && document.querySelectorAll('.xd-collect').length > 0), 6000);
+  check('normal tab: "apply to normal tabs" turns clean mode and the save button on', !!optedIn);
+  await setClean(false);
+  const optedOut = await waitFor(() => normal.evaluate(() => !document.documentElement.classList.contains('xdeck-clean') && document.querySelectorAll('.xd-collect,[data-xd-kind],[data-xd-hide]').length === 0), 6000);
+  check('normal tab: turning it off restores the page', !!optedOut);
   await normal.close();
+  // The header rule follows the deck tab: navigating it away releases the rule, coming back and
+  // reloading keep it in place.
+  await shell.goto('https://x.com/explore', { waitUntil: 'domcontentloaded' });
+  const releasedOnNav = await waitFor(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).length === 0, 6000);
+  check('security: the header rule is released when the deck tab navigates away', !!releasedOnNav);
+  await shell.goto(deckUrl, { waitUntil: 'commit' });
+  const backAgain = await waitFor(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).length === 1, 8000);
+  check('security: the rule is registered again when the deck is opened again', !!backAgain);
+  await shell.reload({ waitUntil: 'commit' });
+  await sleep(2000);
+  check('security: reloading the deck tab keeps exactly one rule', (await sw.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).length === 1);
   await shell.close();
   const rulesAfter = await waitFor(async () => {
     const r = await sw.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
@@ -273,7 +296,7 @@ try {
 
   // Unread + alert: a newer post appears after the column has armed.
   await page.mouse.move(800, 20);
-  await sleep(4500);
+  check('unread: the column arms itself (new posts count from here)', !!(await waitFor(() => f1.evaluate(() => document.documentElement.hasAttribute('data-xd-armed')), 20000)));
   await f1.evaluate(() => {
     const tl = document.getElementById('timeline');
     const cell = tl.firstElementChild.cloneNode(true);
@@ -605,8 +628,8 @@ try {
   const before = { a: countFor('/nasa'), b: countFor('/esa'), c: countFor('/cnes') };
   const aRefreshed = await waitFor(() => countFor('/nasa') > before.a, 30000);
   check('timer: an unhovered column reloads when its timer is due', aRefreshed, `${before.a} -> ${countFor('/nasa')}`);
-  await sleep(1500);
-  check('timer: a hovered column waits instead of reloading', countFor('/esa') === before.b && /waiting/.test(await timerText(1)), `${countFor('/esa')} vs ${before.b}; label "${await timerText(1)}"`);
+  const waitingLabel = await waitFor(async () => (/waiting/.test(await timerText(1)) ? await timerText(1) : null), 6000);
+  check('timer: a hovered column waits instead of reloading', countFor('/esa') === before.b && !!waitingLabel, `${countFor('/esa')} vs ${before.b}; label "${waitingLabel}"`);
   check('timer: a column with refresh off is never reloaded', countFor('/cnes') === before.c);
   await tp.mouse.move(800, 20);
   const bRefreshed = await waitFor(() => countFor('/esa') > before.b, 20000);
@@ -688,6 +711,12 @@ try {
   await mp.waitForSelector('.col');
   const card = await waitFor(() => mp.locator('.col').first().locator('.col-error').textContent(), 25000);
   check('refused everywhere: the column shows the error card with Retry', /X would not show this page in a column/.test(card || '') && await mp.locator('.col').first().locator('.col-error button', { hasText: 'Retry' }).count() === 1, String(card));
+  const msgLoads = () => requests.filter((r) => r.path === '/messages' && r.dest === 'iframe').length;
+  const loadsBefore = msgLoads();
+  await mp.locator('.col').first().locator('.col-error button', { hasText: 'Retry' }).click();
+  const retried = await waitFor(() => msgLoads() > loadsBefore, 10000);
+  check('refused everywhere: Retry loads the page again', !!retried, `${loadsBefore} -> ${msgLoads()}`);
+  check('refused everywhere: and the card comes back when X still refuses', !!(await waitFor(() => mp.locator('.col').first().locator('.col-error').count().then((n) => n === 1), 25000)));
   const rememberedMsg = (await sw.evaluate(() => chrome.storage.local.get('xdeckBootPaths'))).xdeckBootPaths || [];
   check('refused everywhere: a failed hop is not remembered as a refused path', !rememberedMsg.includes('/messages'), JSON.stringify(rememberedMsg));
   check('refused everywhere: other columns still load', await waitFor(async () => {
@@ -848,6 +877,31 @@ try {
   await ui.keyboard.press('Escape');
   await ui.screenshot({ path: path.join(outDir, '14-ui.png') });
   await ui.close();
+
+  // ------------------------------------------------------------------
+  // Phase 8: lazy loading (the shipped default): off-screen columns load when they scroll into view
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    // no lazyLoad key at all: the shipped default applies
+    workspaces: [{ id: 'wl', name: 'Wide', layout: 'columns', gridRows: 0, columns: Array.from({ length: 10 }, (_, i) => col('bookmarks', {}, { title: `C${i + 1}`, width: 'xwide', refreshSec: 0 })) }],
+    activeWorkspaceId: 'wl',
+    migrations: ['grid-auto-v1'],
+  });
+  const lz = await context.newPage();
+  watchErrors(lz);
+  await lz.goto(deckUrl, { waitUntil: 'commit' });
+  await lz.waitForSelector('.col');
+  await sleep(2500);
+  const loadedNow = await lz.locator('.col iframe[src]').count();
+  check('lazy loading: only the visible columns load at first (default settings)', loadedNow > 0 && loadedNow < 10, `${loadedNow} of 10`);
+  for (let i = 0; i < 12; i++) { // scroll through the row, as a user would, so each column passes the viewport
+    await lz.evaluate(() => { const c = document.querySelector('.ws:not([hidden]) .ws-cols'); c.scrollLeft += 600; });
+    await sleep(250);
+  }
+  const allLoaded = await waitFor(async () => (await lz.locator('.col iframe[src]').count()) === 10, 10000);
+  check('lazy loading: scrolling brings the rest in', !!allLoaded, `${await lz.locator('.col iframe[src]').count()} of 10`);
+  await lz.close();
 
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {

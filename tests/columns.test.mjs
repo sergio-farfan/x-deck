@@ -99,6 +99,7 @@ globalThis.chrome = { storage: { local: { set: (x) => { written = x; return Prom
 await saveSettings({ a: 1 });
 eq('store: a good write still goes through without a report', [written, errors.length], [{ settings: { a: 1 } }, 0]);
 
+eq('defaults: lazy loading is on (the e2e lazy-loading check relies on it)', DEFAULT_SETTINGS.lazyLoad, true);
 // ---- small fixes ----
 eq('safeXUrl: the boot hop and the deck itself are never valid targets', [safeXUrl('https://x.com/i/xdk-boot?go=/home'), safeXUrl('https://x.com/i/xdeck'), safeXUrl('https://x.com/home')], [null, null, 'https://x.com/home']);
 eq('columnFromUrl: a known explore tab becomes an Explore column, an unknown one a plain URL column', [columnFromUrl('https://x.com/explore/tabs/news').type, columnFromUrl('https://x.com/explore/tabs/for_you').type, columnFromUrl('https://x.com/explore/tabs/for_you').params.url], ['explore', 'custom', 'https://x.com/explore/tabs/for_you']);
