@@ -1,7 +1,8 @@
 // Unit tests for the pure parts of src/columns.js and src/store.js (no browser needed).
 // Run: npm run test:columns
 
-import { SEARCH_PRESETS, NEWS_SITES, RETIRED_DEFAULT_QUERIES, buildSearchQuery, buildUrl, makeColumn } from '../src/columns.js';
+import { luminance, contrast, onAccent, readableOn, THEME_BACKGROUNDS } from '../src/color.js';
+import { SEARCH_PRESETS, columnFromUrl, safeXUrl, NEWS_SITES, RETIRED_DEFAULT_QUERIES, buildSearchQuery, buildUrl, makeColumn } from '../src/columns.js';
 import { migrateWorkspaces, migrateGridAuto, autoGridRows, gridRowsFor, normalizeWorkspace, defaultWorkspaces, planImport, IMPORT_LIMITS, DEFAULT_SETTINGS, saveSettings, saveWorkspaces, flushWorkspaces, onSaveFailure } from '../src/store.js';
 
 let failed = 0;
@@ -97,6 +98,16 @@ let written = null;
 globalThis.chrome = { storage: { local: { set: (x) => { written = x; return Promise.resolve(); } } } };
 await saveSettings({ a: 1 });
 eq('store: a good write still goes through without a report', [written, errors.length], [{ settings: { a: 1 } }, 0]);
+
+// ---- small fixes ----
+eq('safeXUrl: the boot hop and the deck itself are never valid targets', [safeXUrl('https://x.com/i/xdk-boot?go=/home'), safeXUrl('https://x.com/i/xdeck'), safeXUrl('https://x.com/home')], [null, null, 'https://x.com/home']);
+eq('columnFromUrl: a known explore tab becomes an Explore column, an unknown one a plain URL column', [columnFromUrl('https://x.com/explore/tabs/news').type, columnFromUrl('https://x.com/explore/tabs/for_you').type, columnFromUrl('https://x.com/explore/tabs/for_you').params.url], ['explore', 'custom', 'https://x.com/explore/tabs/for_you']);
+// ---- accent colours ----
+eq('color: black and white are the extremes', [luminance('#000000'), luminance('#ffffff'), Math.round(contrast('#000000', '#ffffff'))], [0, 1, 21]);
+eq('color: button text is black on light accents and white on dark ones', ['#ffd400', '#ff7a00', '#00ba7c', '#1d9bf0', '#a100ff', '#7856ff'].map(onAccent), ['#000000', '#000000', '#000000', '#000000', '#ffffff', '#ffffff']);
+eq('color: every swatch gives its button text at least 4.5:1 contrast', ['#1d9bf0', '#7856ff', '#a100ff', '#f91880', '#ff7a00', '#00ba7c', '#ffd400'].every((c) => contrast(c, onAccent(c)) >= 4.5), true);
+eq('color: yellow text on white is darkened to 3:1, on black it is left alone', [contrast(readableOn('#ffd400', THEME_BACKGROUNDS.light), THEME_BACKGROUNDS.light) >= 3, readableOn('#ffd400', THEME_BACKGROUNDS.dark)], [true, '#ffd400']);
+eq('color: a bad value is returned unchanged', readableOn('red', '#000000'), 'red');
 
 console.log(`\n${total - failed}/${total} passed`);
 process.exit(failed ? 1 : 0);

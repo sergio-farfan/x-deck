@@ -6,6 +6,7 @@ import { buildUrl, describe, makeColumn, normalizeColumn, columnFromUrl, safeXUr
 import { h, icon, iconButton, append, clear, toast, popMenu, closeMenu, focusQuietly, confirmDialog, promptDialog, copyText, downloadText } from './dom.js';
 import { openColumnEditor, openSettings, openHelp, openRefreshDialog } from './dialogs.js';
 import { CollectionsDrawer } from './collections.js';
+import { onAccent, readableOn, THEME_BACKGROUNDS } from './color.js';
 
 const X_ORIGINS = new Set(['https://x.com']);
 const FRAME_ORIGIN = 'https://x.com';
@@ -664,8 +665,15 @@ const reader = {
     this.requestedAt = Date.now();
     this.loader.go(url);
   },
+  // Unload the page too: a hidden frame keeps playing video and audio.
   close() {
     $reader.hidden = true;
+    if (this.iframe && this.loaded) {
+      setFrameSrc(this.iframe, 'about:blank');
+      this.loaded = false;
+      this.ready = false;
+      this.pending = null;
+    }
   },
   onMessage(m) {
     if (m.type === 'hello') {
@@ -726,12 +734,20 @@ const composer = {
     this.sawCompose = false;
     this.loader.go('https://x.com/compose/post');
   },
-  close() {
+  // The composer is a same-origin frame, so its text box can be read to see whether there is a draft.
+  hasDraft() {
+    try {
+      const doc = this.iframe && this.iframe.contentDocument;
+      const box = doc && doc.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]');
+      return !!(box && box.textContent.trim());
+    } catch { return false; }
+  },
+  // Closing blanks the frame, which throws an unposted draft away: ask first (force = after posting).
+  async close(force = false) {
+    if ($composer.hidden) return;
+    if (!force && this.hasDraft() && !(await confirmDialog('Discard this post? It has not been sent.', { okLabel: 'Discard', danger: true }))) return;
     $composer.hidden = true;
     if (this.iframe) setFrameSrc(this.iframe, 'about:blank');
-  },
-  toggle() {
-    if ($composer.hidden) this.open(); else this.close();
   },
   onMessage(m) {
     if (m.type === 'hello') postTo(this.iframe, { type: 'config', role: 'compose', column: null });
@@ -739,7 +755,7 @@ const composer = {
     if (m.type === 'hello' || m.type === 'nav') {
       const href = String(m.href || '');
       if (href.includes('/compose/')) this.sawCompose = true;
-      else if (this.sawCompose && !$composer.hidden) setTimeout(() => this.close(), 300); // posted or discarded
+      else if (this.sawCompose && !$composer.hidden) setTimeout(() => this.close(true), 300); // posted or discarded inside X
     }
     if (m.type === 'bootFailed') this.loader.onRefused(this.loader.target);
     if (m.type === 'key') handleKey(String(m.code || ''));
@@ -775,8 +791,8 @@ function ensureWsEl(ws) {
     h('p', null, 'Add Home, Notifications, searches, lists or profiles. Each column is a live x.com view.'),
     h('div', { class: 'empty-actions' },
       h('button', { type: 'button', class: 'btn btn-primary', onclick: () => addColumnDialog() }, 'Add column'),
-      h('button', { type: 'button', class: 'btn', onclick: () => addColumn(makeColumn('home', { homeTab: 'following' })) }, 'Add Home'),
-      h('button', { type: 'button', class: 'btn', onclick: () => addColumn(makeColumn('notifications', { scope: 'all' })) }, 'Add Notifications')));
+      h('button', { type: 'button', class: 'btn', onclick: () => addColumn(withDefaults(makeColumn('home', { homeTab: 'following' }))) }, 'Add Home'),
+      h('button', { type: 'button', class: 'btn', onclick: () => addColumn(withDefaults(makeColumn('notifications', { scope: 'all' }))) }, 'Add Notifications')));
   const el = h('div', { class: 'ws', dataset: { id: ws.id } }, tabs, cols, empty);
   $workspaces.appendChild(el);
   const io = new IntersectionObserver((entries) => {
@@ -927,6 +943,11 @@ function focusColumnIndex(i) {
 }
 
 // ---------- column operations ----------
+
+// New columns made from a link or a shortcut button follow the default width and refresh settings.
+function withDefaults(col) {
+  return { ...col, width: app.settings.columnWidth, refreshSec: app.settings.autoRefreshSec };
+}
 
 function addColumn(col, { focus = true } = {}) {
   if (app.superseded) return null;
@@ -1258,8 +1279,12 @@ function applySettings(next) {
 
 function applyTheme() {
   const s = app.settings;
-  document.documentElement.dataset.theme = ['dark', 'dim', 'light'].includes(s.theme) ? s.theme : 'dark';
-  document.documentElement.style.setProperty('--accent', /^#[0-9a-f]{6}$/i.test(s.accent) ? s.accent : DEFAULT_SETTINGS.accent);
+  const accent = /^#[0-9a-f]{6}$/i.test(s.accent) ? s.accent : DEFAULT_SETTINGS.accent;
+  const theme = ['dark', 'dim', 'light'].includes(s.theme) ? s.theme : 'dark';
+  document.documentElement.style.setProperty('--on-accent', onAccent(accent));
+  document.documentElement.style.setProperty('--accent-text', readableOn(accent, THEME_BACKGROUNDS[theme]));
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.setProperty('--accent', accent);
 }
 
 function describeImport(plan, replacing) {
@@ -1356,7 +1381,7 @@ function renderRail() {
   clear($rail);
   append($rail, [
     h('div', { class: 'logo', title: 'XDeck' }, logo()),
-    railBtn('pen', 'New post (Alt+N)', () => composer.toggle(), 'compose'),
+    railBtn('pen', 'New post (Alt+N)', () => composer.open(), 'compose'),
     railBtn('plus', 'Add column (Alt+A)', () => addColumnDialog()),
     railBtn('search', 'Search X (Alt+S)', () => { if (app.qsearch) app.qsearch.focus(); }),
     railBtn('bookmark', 'Collections (Alt+C)', () => app.collections.toggle()),
@@ -1367,6 +1392,10 @@ function renderRail() {
 }
 
 function renderTopbar() {
+  // The bar is rebuilt on every change; remember what had focus (and what was typed) and restore it.
+  const ae = document.activeElement;
+  const fid = ae && $topbar.contains(ae) && ae.dataset ? ae.dataset.fid || '' : '';
+  const typed = app.qsearch ? { value: app.qsearch.value, focused: ae === app.qsearch } : null;
   clear($topbar);
   const ws = activeWs();
   const tabs = h('div', { class: 'ws-switch', role: 'tablist', 'aria-label': 'Workspaces' },
@@ -1376,17 +1405,19 @@ function renderTopbar() {
       class: `ws-tab${w.id === app.activeId ? ' active' : ''}`,
       'aria-selected': String(w.id === app.activeId),
       title: 'Click to switch, double-click to rename, right-click for more',
+      dataset: { fid: `ws-${w.id}` },
       onclick: () => { if (w.id !== app.activeId) showWorkspace(w.id); },
       ondblclick: () => renameWorkspace(w.id),
       oncontextmenu: (e) => { e.preventDefault(); workspaceMenu(w, e.currentTarget); },
     }, h('span', null, w.name), h('span', { class: 'badge ws-badge', hidden: true, dataset: { ws: w.id } }))),
-    iconButton('plus', 'New workspace', addWorkspace, { size: 16, class: 'ws-add' }));
+    iconButton('plus', 'New workspace', addWorkspace, { size: 16, class: 'ws-add', attrs: { 'data-fid': 'ws-add' } }));
 
   const q = h('input', { class: 'qsearch-input', type: 'search', placeholder: 'Search X, Enter adds a column', 'aria-label': 'Search X and add a column' });
   q.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return; // Enter that confirms an IME candidate is not a submit
     if (e.key === 'Enter' && q.value.trim()) {
       const col = columnFromUrl(q.value.trim());
-      if (col && /^https?:/i.test(q.value.trim())) addColumn(col);
+      if (col && /^https?:/i.test(q.value.trim())) addColumn(withDefaults(col));
       else addSearchColumn(q.value.trim());
       q.value = '';
       q.blur();
@@ -1402,12 +1433,13 @@ function renderTopbar() {
       class: ws.layout === id ? 'on' : '',
       title: `${label} layout (Alt+L cycles)`,
       'aria-pressed': String(ws.layout === id),
+      'data-fid': `layout-${id}`,
       onclick: () => setLayout(id),
     }, icon(id, 16), h('span', null, label))));
 
   const rows = ws.layout === 'grid'
     ? h('select', {
-      id: 'grid-rows', class: 'select-sm', title: 'Grid rows', 'aria-label': 'Grid rows',
+      id: 'grid-rows', class: 'select-sm', title: 'Grid rows', 'aria-label': 'Grid rows', 'data-fid': 'rows',
       onchange: (e) => { ws.gridRows = +e.target.value; renderWorkspace(ws); save(); },
     }, [[0, autoRowsLabel(ws)], ...[1, 2, 3, 4].map((n) => [n, `${n} row${n > 1 ? 's' : ''}`])]
       .map(([n, label]) => h('option', { value: String(n), selected: ws.gridRows === n }, label)))
@@ -1419,12 +1451,15 @@ function renderTopbar() {
     h('label', { class: 'qsearch' }, icon('search', 16), q),
     seg,
     rows,
-    iconButton('panel', `Reading pane: ${app.settings.readingPane ? 'on' : 'off'} (Alt+P)`, toggleReadingPane, { class: app.settings.readingPane ? 'on' : '' }),
-    iconButton('timer', 'Auto refresh settings for this workspace', () => refreshDialog(ws.id)),
-    iconButton(app.refreshPaused ? 'play' : 'pause', app.refreshPaused ? 'Resume auto refresh' : 'Pause auto refresh for every column', toggleRefreshPause, { class: app.refreshPaused ? 'on' : '' }),
-    iconButton('checkAll', 'Mark all as read (Alt+M)', markAllRead),
-    iconButton('refresh', 'Refresh all columns (Alt+R)', refreshAll),
+    iconButton('panel', `Reading pane: ${app.settings.readingPane ? 'on' : 'off'} (Alt+P)`, toggleReadingPane, { class: app.settings.readingPane ? 'on' : '', attrs: { 'data-fid': 'panel' } }),
+    iconButton('timer', 'Auto refresh settings for this workspace', () => refreshDialog(ws.id), { attrs: { 'data-fid': 'timer' } }),
+    iconButton(app.refreshPaused ? 'play' : 'pause', app.refreshPaused ? 'Resume auto refresh' : 'Pause auto refresh for every column', toggleRefreshPause, { class: app.refreshPaused ? 'on' : '', attrs: { 'data-fid': 'pause' } }),
+    iconButton('checkAll', 'Mark all as read (Alt+M)', markAllRead, { attrs: { 'data-fid': 'readall' } }),
+    iconButton('refresh', 'Refresh all columns (Alt+R)', refreshAll, { attrs: { 'data-fid': 'refreshall' } }),
   ]);
+  if (typed && typed.value) q.value = typed.value;
+  if (typed && typed.focused) focusQuietly(q);
+  else if (fid) { const again = $topbar.querySelector(`[data-fid="${fid}"]`); if (again) focusQuietly(again); }
   scheduleBadges();
 }
 
@@ -1477,7 +1512,7 @@ async function handleInboxItem(key, it) {
   await chrome.storage.local.remove(key);
   if (it.action === 'addColumn') {
     const col = columnFromUrl(it.url);
-    if (col) addColumn({ ...col, width: app.settings.columnWidth, refreshSec: app.settings.autoRefreshSec });
+    if (col) addColumn(withDefaults(col));
     else toast('That link is not an x.com page XDeck can show');
   } else if (it.action === 'addSearch' && it.query) {
     addSearchColumn(String(it.query));

@@ -766,6 +766,89 @@ try {
   check('unread: the count is still there after switching back', back === '1', String(back));
   await up.close();
 
+  // ------------------------------------------------------------------
+  // Phase 7: UI behaviour: menus, dialogs, composer draft, reading pane, toasts, intervals
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    settings: { lazyLoad: false, accent: '#ffd400', theme: 'light' },
+    workspaces: [{ id: 'wu', name: 'UI', layout: 'columns', gridRows: 0, columns: [col('bookmarks', {}, { title: 'Odd interval', refreshSec: 45 }), col('bookmarks', {}, { title: 'Second', refreshSec: 0 })] }],
+    activeWorkspaceId: 'wu',
+    migrations: ['grid-auto-v1'],
+  });
+  const ui = await context.newPage();
+  watchErrors(ui);
+  await ui.goto(deckUrl, { waitUntil: 'commit' });
+  await ui.waitForSelector('.col');
+  // Colours: a light accent still gives readable button text.
+  const colors = await ui.evaluate(() => { const cs = getComputedStyle(document.documentElement); return [cs.getPropertyValue('--on-accent').trim(), cs.getPropertyValue('--accent-text').trim()]; });
+  check('theme: yellow accent gets dark button text and a darkened accent text colour on the light theme', colors[0] === '#000000' && colors[1] !== '#ffd400', JSON.stringify(colors));
+  // Menu: arrow keys move, Escape returns focus to the button that opened it.
+  const more = ui.locator('.col').first().locator('.icon-btn[aria-label="More"]');
+  await more.click();
+  await ui.keyboard.press('ArrowDown');
+  const focusedItem = await ui.evaluate(() => document.activeElement && document.activeElement.className);
+  await ui.keyboard.press('Escape');
+  const backOn = await ui.evaluate(() => document.activeElement && document.activeElement.getAttribute('aria-label'));
+  check('menu: arrow keys move through items and Escape returns focus to the opener', /menu-item/.test(focusedItem) && backOn === 'More', `${focusedItem} / ${backOn}`);
+  // Intervals that are not in the list are shown as they are.
+  await ui.locator('.col').first().locator('.icon-btn[aria-label="Edit column and filters"]').click();
+  await ui.waitForSelector('dialog[open]');
+  const shown = await ui.locator('dialog[open] select').nth(1).evaluate((el) => el.options[el.selectedIndex].textContent);
+  check('editor: an interval that is not in the list (45 s) is shown, not "Off"', shown === 'Every 45 s', shown);
+  await ui.keyboard.press('Escape');
+  // Enter in a single-line field submits the dialog.
+  await ui.locator('.rail-btn[aria-label^="Add column"]').click();
+  await ui.waitForSelector('dialog[open]');
+  await ui.locator('dialog[open] .type-card', { hasText: 'Profile' }).click();
+  check('editor: the selected column type is exposed with aria-pressed', await ui.locator('dialog[open] .type-card[aria-pressed="true"]', { hasText: 'Profile' }).count() === 1);
+  await ui.locator('dialog[open] .source input').fill('@nasa');
+  await ui.locator('dialog[open] .source input').press('Enter');
+  check('editor: Enter in a text field adds the column', !!(await waitFor(() => ui.locator('.col').count().then((n) => n === 3), 5000)));
+  // Composer: Alt+N opens it, the rail button keeps the draft, closing a draft asks first.
+  await ui.keyboard.press('Alt+KeyN');
+  const cFrame = await waitFor(async () => {
+    const hnd = await ui.locator('#composer iframe').elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && (await fr.evaluate(() => location.pathname)) === '/compose/post' ? fr : null;
+  }, 20000);
+  await cFrame.evaluate(() => { const d = document.createElement('div'); d.setAttribute('data-testid', 'tweetTextarea_0'); d.setAttribute('contenteditable', 'true'); d.textContent = 'unsent draft'; document.body.appendChild(d); });
+  await ui.locator('.rail-btn.compose').click();
+  await sleep(400);
+  check('composer: the New post button keeps an open draft', await ui.locator('#composer').isVisible() && (await cFrame.evaluate(() => !!document.querySelector('[data-testid="tweetTextarea_0"]'))));
+  await ui.locator('#composer .icon-btn[aria-label="Close"]').click();
+  await ui.waitForSelector('dialog[open]');
+  check('composer: closing a draft asks before discarding it', (await ui.locator('dialog[open] .dlg-body').textContent()).includes('Discard this post?'));
+  await ui.locator('dialog[open] .btn', { hasText: 'Cancel' }).last().click();
+  check('composer: Cancel keeps the draft', await ui.locator('#composer').isVisible());
+  await ui.locator('#composer .icon-btn[aria-label="Close"]').click();
+  await ui.waitForSelector('dialog[open]');
+  await ui.locator('dialog[open] .btn-danger', { hasText: 'Discard' }).click();
+  check('composer: Discard closes it', !!(await waitFor(() => ui.locator('#composer').isHidden(), 4000)));
+  // Reading pane: closing unloads the page.
+  await sw.evaluate(() => chrome.storage.local.set({ 'inbox:ui-1': { action: 'openDetail', url: 'https://x.com/bob/status/1001', at: Date.now() } }));
+  const rFrame = await waitFor(async () => {
+    const hnd = await ui.locator('#reader iframe').elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && fr.url() === 'https://x.com/bob/status/1001' ? fr : null;
+  }, 20000);
+  await ui.locator('#reader .icon-btn[aria-label="Close reading pane"]').click();
+  const unloaded = await waitFor(async () => {
+    const hnd = await ui.locator('#reader iframe').elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && fr.url() === 'about:blank';
+  }, 5000);
+  check('reading pane: closing it unloads the page (no sound from a hidden frame)', !!rFrame && !!unloaded);
+  // Toasts sit in the top layer, above dialogs.
+  await ui.locator('.rail-btn[aria-label="Settings"]').click();
+  await ui.waitForSelector('dialog[open]');
+  await ui.locator('dialog[open] input[type="file"]').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('not json') });
+  await ui.waitForSelector('.toast');
+  check('toast: shown in the top layer, above an open dialog', await ui.evaluate(() => document.querySelector('.toasts').matches(':popover-open')));
+  await ui.keyboard.press('Escape');
+  await ui.screenshot({ path: path.join(outDir, '14-ui.png') });
+  await ui.close();
+
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {
   check('test run completed without exceptions', false, err.stack || String(err));

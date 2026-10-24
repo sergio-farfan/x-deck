@@ -93,6 +93,8 @@ export function normalizeWorkspace(ws) {
 export function mergeSettings(stored) {
   const s = { ...DEFAULT_SETTINGS, ...(stored || {}) };
   s.clean = { ...DEFAULT_SETTINGS.clean, ...((stored && stored.clean) || {}) };
+  const rw = Number(s.readingPaneWidth);
+  s.readingPaneWidth = Number.isFinite(rw) ? Math.min(2000, Math.max(360, Math.round(rw))) : DEFAULT_SETTINGS.readingPaneWidth;
   return s;
 }
 
@@ -199,7 +201,14 @@ export async function loadState() {
   const fresh = !(Array.isArray(data.workspaces) && data.workspaces.length);
   const workspaces = fresh ? defaultWorkspaces(settings) : data.workspaces.map(normalizeWorkspace);
   const done = new Set(Array.isArray(data.migrations) ? data.migrations : []);
-  let migrated = fresh ? false : migrateWorkspaces(workspaces);
+  let migrated = false;
+  // The retired-default query rewrite runs once (it used to run on every load and could
+  // rewrite a query the user had built to the same text on purpose).
+  if (!done.has('news-queries-v1')) {
+    done.add('news-queries-v1');
+    if (!fresh) migrateWorkspaces(workspaces);
+    migrated = true;
+  }
   if (!done.has('grid-auto-v1')) {
     done.add('grid-auto-v1');
     if (!fresh && migrateGridAuto(workspaces)) migrated = true;

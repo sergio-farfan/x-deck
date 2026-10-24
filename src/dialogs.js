@@ -37,10 +37,15 @@ function field(label, control, hint) {
   return h('label', { class: 'field' }, h('span', null, label), control, hint ? h('small', { class: 'hint' }, hint) : null);
 }
 
-function select(options, value, attrs = {}) {
+// A current value that is not among the options (an interval from an imported file, say)
+// gets its own option so the dialog shows it and saving keeps it, instead of falling back to the first option.
+function select(options, value, attrs = {}, describeOther = (v) => String(v)) {
+  const list = options.some(([v]) => String(v) === String(value)) || value === undefined || value === null || value === ''
+    ? options : [...options, [value, describeOther(value)]];
   return h('select', { class: 'input', ...attrs },
-    options.map(([v, l]) => h('option', { value: String(v), selected: String(v) === String(value) }, l)));
+    list.map(([v, l]) => h('option', { value: String(v), selected: String(v) === String(value) }, l)));
 }
+const everySeconds = (v) => `Every ${v} s`;
 
 function check(label, checked, attrs = {}) {
   const input = h('input', { type: 'checkbox', checked: !!checked, ...attrs });
@@ -232,10 +237,10 @@ export function openColumnEditor({ column, isNew, settings, onSave, onDelete }) 
   // Type picker (new columns only).
   const typeCards = COLUMN_TYPES.map((t) => {
     const b = h('button', {
-      type: 'button', class: `type-card${t.type === typeSel ? ' on' : ''}`,
+      type: 'button', class: `type-card${t.type === typeSel ? ' on' : ''}`, 'aria-pressed': String(t.type === typeSel),
       onclick: () => {
         typeSel = t.type;
-        for (const c of typeCards) c.classList.toggle('on', c === b);
+        for (const c of typeCards) { c.classList.toggle('on', c === b); c.setAttribute('aria-pressed', String(c === b)); }
         renderSource();
         error.hidden = true;
       },
@@ -246,7 +251,7 @@ export function openColumnEditor({ column, isNew, settings, onSave, onDelete }) 
   // Display options.
   const title = text(draft.title, { placeholder: 'Automatic' });
   const width = select(WIDTH_CHOICES, draft.width);
-  const refresh = select(REFRESH_CHOICES, draft.refreshSec);
+  const refresh = select(REFRESH_CHOICES, draft.refreshSec, {}, everySeconds);
   const refreshMode = select(REFRESH_METHODS, draft.refreshMode);
   const notify = check('Desktop alert for new posts in this column', draft.notify);
 
@@ -289,7 +294,7 @@ export function openColumnEditor({ column, isNew, settings, onSave, onDelete }) 
 
   const form = h('div', { class: 'editor-form' }, section('Source', sourceBox), display, filters, error);
   const body = isNew
-    ? h('div', { class: 'editor' }, h('div', { class: 'type-grid', role: 'list' }, typeCards), form)
+    ? h('div', { class: 'editor' }, h('div', { class: 'type-grid', role: 'group', 'aria-label': 'Column type' }, typeCards), form)
     : form;
 
   openDialog({
@@ -364,11 +369,14 @@ export function openSettings({ settings, onChange, onExport, onImport, onReset }
   const accent = h('input', { type: 'color', class: 'color', value: s.accent, 'aria-label': 'Accent color' });
   accent.addEventListener('input', () => { s.accent = accent.value; commit(); });
   const swatches = h('div', { class: 'swatches' }, ACCENTS.map(([c, name]) => h('button', {
-    type: 'button', class: 'swatch', title: name, 'aria-label': name, style: { background: c },
-    onclick: () => { s.accent = c; accent.value = c; commit(); },
+    type: 'button', class: 'swatch', title: name, 'aria-label': name, 'aria-pressed': String(String(s.accent).toLowerCase() === c), style: { background: c },
+    onclick: (e) => {
+      s.accent = c; accent.value = c; commit();
+      for (const b of e.currentTarget.parentElement.children) b.setAttribute('aria-pressed', String(b === e.currentTarget));
+    },
   })));
   const width = bind(select(WIDTH_CHOICES, s.columnWidth), 'columnWidth', (el) => el.value);
-  const refresh = bind(select(REFRESH_CHOICES, s.autoRefreshSec), 'autoRefreshSec', (el) => +el.value);
+  const refresh = bind(select(REFRESH_CHOICES, s.autoRefreshSec, {}, everySeconds), 'autoRefreshSec', (el) => +el.value);
   const mute = area(s.muteWords, { rows: 3, placeholder: 'Hidden in every column. Comma or newline separated; /regex/ allowed.' });
   const muteError = h('small', { class: 'form-error', role: 'alert', hidden: true });
   mute.addEventListener('change', () => {
@@ -474,7 +482,7 @@ export function openRefreshDialog({ workspace, titleOf, onApply }) {
   const rows = workspace.columns.map((col) => ({
     id: col.id,
     title: titleOf(col),
-    sec: select(REFRESH_CHOICES, col.refreshSec, { class: 'input input-sm', 'aria-label': `Interval for ${titleOf(col)}` }),
+    sec: select(REFRESH_CHOICES, col.refreshSec, { class: 'input input-sm', 'aria-label': `Interval for ${titleOf(col)}` }, everySeconds),
     mode: select(REFRESH_METHODS, col.refreshMode, { class: 'input input-sm', 'aria-label': `Method for ${titleOf(col)}` }),
   }));
   const keep = ['', 'Keep each column as it is'];

@@ -125,7 +125,7 @@ export function safeXUrl(url) {
     if (u.protocol !== 'https:') return null;
     const host = u.hostname.replace(/^(www|mobile)\./, '');
     if (host !== 'x.com' && host !== 'twitter.com') return null;
-    if (/^\/i\/xdeck/i.test(u.pathname)) return null; // never load the deck inside itself
+    if (/^\/i\/(xdeck|xdk-boot)/i.test(u.pathname)) return null; // never the deck itself or its boot hop
     u.hostname = 'x.com';
     return u.toString();
   } catch {
@@ -222,7 +222,8 @@ export function columnFromUrl(url) {
   if (path === '/i/bookmarks') return makeColumn('bookmarks');
   if (path === '/i/grok') return makeColumn('grok');
   if (path.startsWith('/messages')) return makeColumn('messages');
-  if ((m = path.match(/^\/explore\/tabs\/([\w-]+)/))) return makeColumn('explore', { exploreTab: m[1] });
+  // Only the tabs this deck knows; any other explore page (for example For you) stays a plain x.com column.
+  if ((m = path.match(/^\/explore\/tabs\/([\w-]+)/)) && EXPLORE_TABS.some(([t]) => t === m[1])) return makeColumn('explore', { exploreTab: m[1] });
   if ((m = path.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(with_replies|media|likes))?$/)) && !RESERVED_PATHS.has(m[1].toLowerCase())) {
     if (m[2] === 'likes') return makeColumn('likes', { handle: m[1] });
     return makeColumn('user', { handle: m[1], tab: m[2] === 'with_replies' ? 'replies' : m[2] === 'media' ? 'media' : 'posts' });
