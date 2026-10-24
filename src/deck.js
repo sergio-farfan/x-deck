@@ -30,6 +30,7 @@ const app = {
   firstSeen: new Map(),   // postId -> columnId, for cross-column de-duplication
   qsearch: null,
   collections: null,
+  colState: new Map(),   // columnId -> { mark, unread } kept across workspace switches (views are destroyed)
   booted: false,
   invalidated: false,   // the extension was updated or reloaded under this deck: saving is impossible
   refreshPaused: false,  // pauses every column's auto-refresh timer (not saved)
@@ -132,10 +133,12 @@ function rememberBootPath(path) {
 }
 
 class FrameLoader {
-  constructor(iframe, { onReady = () => {}, onRefused = () => {} } = {}) {
+  constructor(iframe, { onReady = () => {}, onRefused = () => {}, onGo = () => {} } = {}) {
     this.iframe = iframe;
     this.onReady = onReady;
     this.onRefused = onRefused;
+    this.onGo = onGo;
+    this.attempts = []; // recent boot-hop starts, to stop a refuse/heal/refuse loop
     this.target = '';
     this.requested = '';
     this.retried = false;
@@ -147,6 +150,8 @@ class FrameLoader {
     this.target = url;
     this.retried = false;
     this.trial = '';
+    this.attempts = [];
+    this.onGo();
     this.requested = app.bootPaths.has(pathOf(url)) ? bootUrl(url) : url;
     setFrameSrc(this.iframe, this.requested);
   }
@@ -162,11 +167,17 @@ class FrameLoader {
     try { href = this.iframe.contentWindow.location.href; } catch { href = ''; }
     if (href === 'about:blank') return;
     if (href.startsWith('https://x.com/')) { this.retried = false; this.onReady(href); return; }
+    // Whatever the retry flags say, give up after 5 boot attempts within a minute.
+    const now = Date.now();
+    this.attempts = this.attempts.filter((t) => now - t < 60000);
+    if (this.attempts.length >= 5) { this.attempts = []; this.onRefused(this.target); return; }
     if (!isBootUrl(this.requested)) {
+      this.attempts.push(now);
       this.trial = pathOf(this.target);
       this.requested = bootUrl(this.target);
       setFrameSrc(this.iframe, this.requested);
     } else if (!this.retried) {
+      this.attempts.push(now);
       this.retried = true;
       setFrameSrc(this.iframe, this.requested);
     } else {
@@ -187,7 +198,8 @@ function samePage(href, url) {
   try {
     const a = new URL(href);
     const b = new URL(url);
-    if (a.pathname.replace(/\/+$/, '') !== b.pathname.replace(/\/+$/, '')) return false;
+    // Handles are case-insensitive: X may canonicalise /nasa to /NASA.
+    if (a.pathname.replace(/\/+$/, '').toLowerCase() !== b.pathname.replace(/\/+$/, '').toLowerCase()) return false;
     if (b.pathname === '/search') return a.searchParams.get('q') === b.searchParams.get('q');
     return true;
   } catch {
@@ -222,13 +234,20 @@ class ColumnView {
     this.nextAt = 0;      // when the next auto refresh is due (0 = not scheduled yet)
     this.pending = 0;     // when an auto refresh was requested and is awaiting the frame's answer
     this.holding = false; // the frame declined the last request (hovered, scrolled, typing)
+    this.holdReason = '';
     this.timerText = '';
     this.ids = new Set(); // post IDs this column has reported, for de-duplication
+    this.ready = false;   // the current document's script has said hello (it can take messages)
+    this.pendingNav = ''; // navigation requested before the frame was ready
     this.build();
     this.loader = new FrameLoader(this.iframe, {
       onReady: (href) => { if (!isBootUrl(href)) this.showReady(); },
       onRefused: (url) => this.showRefused(url),
+      onGo: () => { this.ready = false; this.pendingNav = ''; },
     });
+    // Unread counts and the newest post seen survive a workspace switch.
+    const saved = app.colState.get(col.id);
+    if (saved) { this.mark = saved.mark; this.unread = saved.unread; this.setUnread(this.unread); }
   }
 
   build() {
@@ -282,15 +301,24 @@ class ColumnView {
     this.holding = false;
   }
 
-  showTimer(text, hold = false) {
-    if (this.timerText === text) return;
-    this.timerText = text;
+  showTimer(text, hold = false, reason = '') {
+    const key = `${text}|${reason}`;
+    if (this.timerText === key) return;
+    this.timerText = key;
     this.timerEl.hidden = !text;
     this.timerEl.textContent = text ? ` \u00b7 ${text}` : '';
     this.timerEl.classList.toggle('hold', hold);
+    const WHY = {
+      hover: 'the pointer is over this column',
+      scrolled: 'it is scrolled down',
+      typing: 'you are typing in it',
+      dialog: 'a dialog is open in it',
+      offpage: 'it is no longer on its start page (use Back)',
+    };
     this.timerEl.title = hold && text === 'waiting'
-      ? 'Waiting: the pointer is over this column, it is scrolled down, or you are typing in it. Retrying every 5 seconds.'
-      : text === 'paused' ? 'Auto refresh is paused (button in the top bar).' : 'Time until the next auto refresh.';
+      ? `Waiting: ${WHY[reason] || 'the column is busy'}. Retrying every 5 seconds.`
+      : hold && text === 'off page' ? 'Not refreshing: this column is no longer on its start page. Use Back or the refresh button.'
+        : text === 'paused' ? 'Auto refresh is paused (button in the top bar).' : 'Time until the next auto refresh.';
   }
 
   tick(now, dt) {
@@ -313,15 +341,16 @@ class ColumnView {
       this.post({ type: 'autoRefresh' });
       return;
     }
-    if (this.holding) { this.showTimer('waiting', true); return; }
+    if (this.holding) { this.showTimer(this.holdReason === 'offpage' ? 'off page' : 'waiting', true, this.holdReason); return; }
     const left = Math.ceil((this.nextAt - now) / 1000);
     this.showTimer(`next ${left >= 3600 ? `${Math.floor(left / 3600)}h ${String(Math.floor(left / 60) % 60).padStart(2, '0')}m` : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`}`);
   }
 
-  onRefreshResult(done) {
+  onRefreshResult(done, reason = '') {
     const sec = +this.col.refreshSec || 0;
     this.pending = 0;
     this.holding = !done;
+    this.holdReason = done ? '' : String(reason || '').slice(0, 12);
     this.nextAt = Date.now() + (done ? sec * 1000 : 5000);
   }
 
@@ -366,17 +395,34 @@ class ColumnView {
     this.iconEl.replaceChildren(icon(d.icon, 18));
     this.iframe.title = d.title;
     this.applyWidth();
+    if (oldUrl !== this.url) {
+      // A different page: its posts are not "new" relative to the old page's.
+      this.mark = 0;
+      this.ids.clear();
+      this.setUnread(0);
+      app.colState.delete(col.id);
+    }
     this.sendConfig();
     if (this.loaded && oldUrl !== this.url) this.navigate(this.url);
     if (col.filters.dedupe) {
       const dups = [...this.ids].filter((id) => isDuplicate(this, id));
-      if (dups.length) this.post({ type: 'dups', ids: dups });
+      if (dups.length) this.post({ type: 'dups', ids: dups, reset: true });
     }
   }
 
   navigate(url) {
     if (!this.loaded) { this.load(); return; }
+    // A frame that has not said hello yet (still loading, or on the boot page) would drop this.
+    if (!this.ready) { this.pendingNav = url; return; }
     this.post({ type: 'navigate', url });
+  }
+
+  frameReady() {
+    this.ready = true;
+    if (!this.pendingNav) return;
+    const url = this.pendingNav;
+    this.pendingNav = '';
+    if (!this.href || !samePage(this.href, url)) this.post({ type: 'navigate', url });
   }
 
   reset() {
@@ -400,6 +446,7 @@ class ColumnView {
 
   refresh() {
     if (!this.loaded) { this.load(); return; }
+    if (!this.ready) { this.hardReload(); return; } // nothing there to message; load again
     this.restartTimer();
     if (this.href && !samePage(this.href, this.url)) this.reset();
     else this.post({ type: 'refresh' });
@@ -423,15 +470,21 @@ class ColumnView {
         this.href = String(m.href || '');
         this.backBtn.hidden = samePage(this.href, this.url) || isBootUrl(this.href);
         this.sendConfig();
+        if (!isBootUrl(this.href)) this.frameReady();
         break;
       case 'nav':
         this.href = String(m.href || '');
         this.backBtn.hidden = samePage(this.href, this.url) || isBootUrl(this.href);
-        if (!isBootUrl(this.href)) { this.loader.confirmHop(this.href); this.showReady(); }
+        if (!isBootUrl(this.href)) {
+          this.loader.confirmHop(this.href);
+          this.loader.target = this.href; // heal to where the frame really is, not to its start page
+          this.showReady();
+          this.frameReady();
+        }
         break;
       case 'navFailed': this.loader.go(safeXUrl(m.url) || this.url); break;
       case 'reloadRequest': this.reloadQuietly(); break;
-      case 'refreshResult': this.onRefreshResult(!!m.done); break;
+      case 'refreshResult': this.onRefreshResult(!!m.done, m.reason); break;
       case 'bootFailed': this.showRefused(this.url); break;
       case 'posts': onPosts(this, m); break;
       case 'read': this.setUnread(0); break;
@@ -444,6 +497,7 @@ class ColumnView {
   }
 
   destroy() {
+    app.colState.set(this.col.id, { mark: this.mark, unread: this.unread });
     this.el.remove();
   }
 }
@@ -465,8 +519,12 @@ function onPosts(view, m) {
   const dups = [];
   for (const id of ids) {
     view.ids.add(id);
-    if (!app.firstSeen.has(id)) app.firstSeen.set(id, view.col.id);
-    else if (view.col.filters.dedupe && isDuplicate(view, id)) dups.push(id);
+    // Ownership counts only while the owner is a live column of this workspace;
+    // otherwise (never seen, owner removed, or owner in another workspace) this column claims it.
+    const owner = app.firstSeen.get(id);
+    const ov = owner && app.views.get(owner);
+    if (!ov || ov.wsId !== view.wsId) app.firstSeen.set(id, view.col.id);
+    else if (view.col.filters.dedupe && owner !== view.col.id) dups.push(id);
   }
   if (view.ids.size > 5000) view.ids = new Set([...view.ids].slice(-2000));
   if (app.firstSeen.size > 20000) {
@@ -524,6 +582,14 @@ function updateBadges() {
   for (const v of app.views.values()) {
     perWs.set(v.wsId, (perWs.get(v.wsId) || 0) + v.unread);
     total += v.unread;
+  }
+  // Workspaces that are not loaded keep the counts they had when they were unloaded.
+  for (const w of app.workspaces) {
+    for (const c of w.columns) {
+      if (app.views.has(c.id)) continue;
+      const n = (app.colState.get(c.id) || {}).unread || 0;
+      if (n) { perWs.set(w.id, (perWs.get(w.id) || 0) + n); total += n; }
+    }
   }
   if (!app.settings.showUnread) total = 0;
   for (const b of $topbar.querySelectorAll('.ws-badge')) {
@@ -753,6 +819,17 @@ function renderWorkspace(ws) {
   renderTabStrip(ws, rec);
   rec.empty.hidden = ws.columns.length > 0;
   rec.cols.hidden = ws.columns.length === 0;
+  resyncDups(ws);
+}
+
+// De-duplication follows who currently owns a post. When a column is removed or
+// moved away, posts it hid in another column must show again.
+function resyncDups(ws) {
+  for (const col of ws.columns) {
+    const v = app.views.get(col.id);
+    if (!v || !v.loaded || !v.col.filters.dedupe) continue;
+    v.post({ type: 'dups', ids: [...v.ids].filter((id) => isDuplicate(v, id)), reset: true });
+  }
 }
 
 function autoRowsLabel(ws) {
@@ -1105,6 +1182,12 @@ function switchWorkspace(delta) {
 
 function markAllRead() {
   for (const v of app.views.values()) if (v.wsId === app.activeId) v.setUnread(0);
+  const ws = activeWs();
+  for (const c of ws ? ws.columns : []) {
+    const st = app.colState.get(c.id);
+    if (st && st.unread) app.colState.set(c.id, { ...st, unread: 0 });
+  }
+  scheduleBadges();
 }
 
 // One ticker for every column timer. Timestamps (not tick counts) drive the
@@ -1133,7 +1216,7 @@ function refreshDialog(wsId) {
     onApply: (list) => {
       const byId = new Map(list.map((x) => [x.id, x]));
       ws.columns = ws.columns.map((c) => (byId.has(c.id) ? normalizeColumn({ ...c, ...byId.get(c.id) }) : c));
-      if (ws.id === app.activeId) renderWorkspace(ws);
+      if (app.wsEls.has(ws.id)) renderWorkspace(ws); // also a kept-alive workspace that is not showing
       save();
       const active = ws.columns.filter((c) => c.refreshSec >= 15).length;
       toast(`Auto refresh set: ${active} of ${ws.columns.length} columns`);

@@ -77,31 +77,42 @@
     const m = e.data;
     if (!m || m.ns !== 'xdeck') return;
     switch (m.type) {
-      case 'config':
+      case 'config': {
+        const prev = state.column;
         state.role = m.role || 'column';
         state.column = m.column || null;
-        state.homeTabDone = false;
         applySettings();
+        // Saving the column (title, width, filters) must not reset the page state or
+        // re-force Following/Latest; only a different page or timeline choice does.
+        const same = !!(prev && state.column && prev.url === state.column.url
+          && (prev.params || {}).homeTab === (state.column.params || {}).homeTab
+          && (prev.params || {}).mode === (state.column.params || {}).mode);
         // The deck remembers the newest post this column has shown, so a
         // reloaded column (refresh mode "reload") still detects new posts.
         // Applied in scan() once the column's own page is showing.
         state.baseMark = +m.mark || 0;
-        state.markApplied = false;
-        state.searchTabDone = false;
+        if (!same) {
+          if (prev) resetPageState();
+          state.markApplied = false;
+          state.homeTabDone = false;
+          state.searchTabDone = false;
+        }
         scheduleScan();
         break;
+      }
       case 'refresh': refreshNow(); break;
       case 'autoRefresh': {
         // The deck owns the timers; the frame only says whether now is a good moment.
-        const ok = canRefresh();
-        if (ok) refreshNow();
-        send({ type: 'refreshResult', done: ok });
+        const why = refreshBlocker();
+        if (!why) refreshNow();
+        send({ type: 'refreshResult', done: !why, reason: why });
         break;
       }
       case 'top': window.scrollTo({ top: 0, behavior: 'smooth' }); break;
       case 'back': goBack(); break;
-      case 'navigate': state.searchTabDone = false; spaNavigate(m.url); break;
+      case 'navigate': resetPageState(); spaNavigate(m.url); break;
       case 'dups':
+        if (m.reset) state.dupIds.clear();
         (m.ids || []).forEach((id) => state.dupIds.add(String(id)));
         capSet(state.dupIds, 4000);
         scheduleScan();
@@ -219,7 +230,11 @@
   function analyze(article) {
     const href = Core.permalink(article);
     const cached = article.__xd;
-    if (cached && cached.href === href) return cached;
+    if (cached && cached.href === href) {
+      // X updates counters in place; re-read them so "min likes" and friends see current values.
+      if (cached.post) cached.post.metrics = Core.metrics(article);
+      return cached;
+    }
     const promoted = Core.isPromoted(article);
     const result = { href, promoted, post: promoted ? null : Core.parseArticle(article) };
     if (href || promoted) article.__xd = result; // re-check posts that are still rendering
@@ -293,13 +308,31 @@
     const ids = [];
     const fresh = [];
     let sawPosts = false;
-    for (const cell of document.querySelectorAll(Core.SEL.cell)) {
+    // Position of the topmost post seen before this scan. A new post is above it (a
+    // post loaded by scrolling down is below it), which also catches reposts, whose
+    // time is the original post's, and posts X renders late from a larger batch.
+    let anchorIdx = -1;
+    let postIdx = 0;
+    const cells = document.querySelectorAll(Core.SEL.cell);
+    if (chrono && state.armed) {
+      let i = 0;
+      for (const cell of cells) {
+        const a = cell.querySelector(Core.SEL.article);
+        if (!a) continue;
+        const info = analyze(a);
+        if (info.promoted || !info.post) continue;
+        if (state.seen.has(info.post.id)) { anchorIdx = i; break; }
+        i++;
+      }
+    }
+    for (const cell of cells) {
       const article = cell.querySelector(Core.SEL.article);
       if (!article) { setKind(cell, classifyNonPost(cell)); setHidden(cell, null); continue; }
       const { promoted, post } = analyze(article);
       if (promoted) { setKind(cell, 'promoted'); setHidden(cell, null); continue; }
       setKind(cell, '');
       if (!post) continue;
+      const idx = postIdx++;
       sawPosts = true;
       ensureCollectButton(article, post);
       let reason = filtering && state.cf ? Core.evaluate(post, state.cf) : null;
@@ -314,7 +347,7 @@
         state.seen.add(post.id);
         const t = Date.parse(post.time) || 0;
         if (t > state.watermark) state.watermark = t;
-        if (state.armed && t > prevMark && !reason) fresh.push(slim(post));
+        if (state.armed && !reason && (t > prevMark || (anchorIdx >= 0 && idx < anchorIdx))) fresh.push(slim(post));
       }
     }
     if (chrono && sawPosts && !settling && !state.armed && !state.armTimer) {
@@ -332,6 +365,21 @@
       id: p.id, url: p.url, handle: p.handle, name: p.name,
       text: p.text.slice(0, 500), time: p.time, hasMedia: p.hasMedia,
     };
+  }
+
+  // The column moved to a different page (or a different column's page): what was
+  // seen on the old one says nothing about the new one.
+  function resetPageState() {
+    state.seen.clear();
+    state.owned.clear();
+    state.watermark = 0;
+    state.markApplied = false;
+    state.searchTabDone = false;
+    state.homeTabDone = false;
+    clearTimeout(state.armTimer);
+    state.armTimer = null;
+    state.armed = false;
+    state.settleUntil = Date.now() + 1500;
   }
 
   function disarm() {
@@ -501,6 +549,7 @@
     if (st.length > 50) st.splice(0, st.length - 50);
     state.href = href;
     state.homeTabDone = false;
+    state.searchTabDone = false;
     send({ type: 'nav', href, depth: st.length - 1 });
     scheduleScan();
   }
@@ -588,21 +637,24 @@
     if (!state.column || !state.column.url) return false;
     try {
       const u = new URL(state.column.url);
-      if (location.pathname !== u.pathname) return false;
+      // Handles are case-insensitive: X may canonicalise /nasa to /NASA.
+      if (location.pathname.toLowerCase() !== u.pathname.toLowerCase()) return false;
       if (u.pathname === '/search') return new URLSearchParams(location.search).get('q') === u.searchParams.get('q');
       return true;
     } catch { return false; }
   }
 
-  function canRefresh() {
+  // '' when a refresh may run now, otherwise why not: hover, scrolled, typing, dialog, offpage.
+  function refreshBlocker() {
     const s = state.settings || {};
-    if (state.hovered && s.pauseOnHover !== false) return false;
-    if (window.scrollY > 80) return false;
-    if (document.querySelector('[role="dialog"]')) return false;
+    if (state.hovered && s.pauseOnHover !== false) return 'hover';
+    if (window.scrollY > 80) return 'scrolled';
+    if (document.querySelector('[role="dialog"]')) return 'dialog';
     const ae = document.activeElement;
-    if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return false;
-    return onColumnPage();
+    if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return 'typing';
+    return onColumnPage() ? '' : 'offpage';
   }
+  const canRefresh = () => !refreshBlocker();
 
   function findNewPostsPill() {
     const nodes = document.querySelectorAll('[data-testid="pillLabel"], [data-testid="primaryColumn"] [role="button"], [data-testid="primaryColumn"] button');

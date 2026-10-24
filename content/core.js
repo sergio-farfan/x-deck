@@ -320,5 +320,5 @@
     return null;
   }
 
-  globalThis.XDeckCore = { regexProblem, regexTermProblem, SEL, num, textWithAlt, own, permalink, isPromoted, parseArticle, compileFilters, evaluate, splitTerms };
+  globalThis.XDeckCore = { regexProblem, regexTermProblem, metrics, SEL, num, textWithAlt, own, permalink, isPromoted, parseArticle, compileFilters, evaluate, splitTerms };
 })();

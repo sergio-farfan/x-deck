@@ -100,8 +100,12 @@ const server = https.createServer({
     req.socket.destroy();
     return undefined;
   }
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...X_HEADERS });
-  res.end(url.pathname.startsWith('/i/xdeck') ? SHELL : timeline);
+  const sendPage = () => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...X_HEADERS });
+    res.end(url.pathname.startsWith('/i/xdeck') ? SHELL : timeline);
+  };
+  // One search is deliberately slow so a test can control which column reports its posts first.
+  if (url.pathname === '/search' && url.searchParams.get('q') === 'slowone') setTimeout(sendPage, 4000); else sendPage();
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
@@ -293,6 +297,26 @@ try {
   await page.locator('.col').first().locator('.badge').click();
   check('unread: clicking the badge marks the column read', await page.locator('.col').first().locator('.badge').isHidden());
 
+  // Freshness follows position, not the post's own timestamp.
+  const addCell = (where, id, iso, text, reposted) => f1.evaluate(({ where, id, iso, text, reposted }) => {
+    const tl = document.getElementById('timeline');
+    const cell = tl.firstElementChild.cloneNode(true);
+    cell.querySelector('time').closest('a').setAttribute('href', `/bob/status/${id}`);
+    cell.querySelector('time').setAttribute('datetime', iso);
+    cell.querySelector('[data-testid="tweetText"]').textContent = text;
+    cell.querySelectorAll('.xd-collect').forEach((b) => b.remove());
+    cell.setAttribute('data-xd-test', '1');
+    if (reposted) { const s = document.createElement('span'); s.setAttribute('data-testid', 'socialContext'); s.textContent = 'Zed reposted'; cell.querySelector('article').prepend(s); }
+    tl[where](cell);
+  }, { where, id, iso, text, reposted });
+  await addCell('prepend', '1010', '2026-10-20T08:00:00.000Z', 'Old post, reposted just now', true);
+  check('unread: a new repost of an older post is counted (position, not timestamp)', (await waitFor(() => page.locator('.col').first().locator('.badge:not([hidden])').textContent(), 5000)) === '1');
+  await page.locator('.col').first().locator('.badge').click();
+  await addCell('append', '1011', '2026-10-19T08:00:00.000Z', 'Older post loaded by scrolling down', false);
+  await sleep(1500);
+  check('unread: older posts loaded below (scrolling down) are not counted', await page.locator('.col').first().locator('.badge').isHidden());
+  await f1.evaluate(() => document.querySelectorAll('[data-xd-test]').forEach((n) => n.remove()));
+
   // Collect a post, then see it in the Collections drawer.
   await f1.locator('article').nth(1).locator('.xd-collect').click();
   const saved = await waitFor(async () => (await sw.evaluate(() => chrome.storage.local.get('collections'))).collections, 5000);
@@ -350,6 +374,15 @@ try {
   const f2 = await waitFor(() => frameFor(1));
   const latestSelected = await waitFor(() => f2.evaluate(() => document.querySelector('#search-tabs [data-f="live"]') && document.querySelector('#search-tabs [data-f="live"]').getAttribute('aria-selected') === 'true'), 10000);
   check('search tab: column switches to Latest when X opens on Top', latestSelected);
+  // Navigating inside the column and coming back (X reopens Top) must pick Latest again.
+  await f2.evaluate(() => { history.replaceState({}, '', '/bob/status/1001'); });
+  await sleep(900);
+  await f2.evaluate(() => {
+    history.replaceState({}, '', '/search?q=launch&src=typed_query&f=live');
+    for (const a of document.querySelectorAll('#search-tabs [role="tab"]')) a.setAttribute('aria-selected', String(a.dataset.f === 'top'));
+  });
+  const latestAgain = await waitFor(() => f2.evaluate(() => document.querySelector('#search-tabs [data-f="live"]').getAttribute('aria-selected') === 'true'), 8000);
+  check('search tab: Latest is picked again after navigating inside the column and back', !!latestAgain);
   await waitFor(() => f2.evaluate(() => document.querySelectorAll('[data-xd-kind="promoted"]').length > 0));
   await sleep(800);
   await page.locator('.col').nth(1).locator('.icon-btn[aria-label="Edit column and filters"]').click();
@@ -663,6 +696,64 @@ try {
   check('reading pane: opens a page after a refused first load', !!readerLoaded);
   await mp.screenshot({ path: path.join(outDir, '13-refused-card.png') });
   await mp.close();
+
+  // ------------------------------------------------------------------
+  // Phase 6: unread across a workspace switch; de-duplication after removal
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    settings: { lazyLoad: false },
+    workspaces: [
+      { id: 'wa', name: 'WsA', layout: 'columns', gridRows: 0, columns: [col('search', { query: 'launch', mode: 'live' }, { title: 'A' }), col('search', { query: 'slowone', mode: 'live' }, { title: 'B', filters: { dedupe: true } })] },
+      { id: 'wb', name: 'WsB', layout: 'columns', gridRows: 0, columns: [] },
+    ],
+    activeWorkspaceId: 'wa',
+    migrations: ['grid-auto-v1'],
+  });
+  const up = await context.newPage();
+  watchErrors(up);
+  await up.goto(deckUrl, { waitUntil: 'commit' });
+  await up.waitForSelector('.col');
+  // Columns are found by title: after an Undo the restored column is last in the DOM (CSS order keeps it first on screen).
+  const colBy = (title) => up.locator('.col', { has: up.locator('.col-title', { hasText: new RegExp(`^${title}$`) }) });
+  const upFrame = async (title) => { const hnd = await colBy(title).locator('iframe').elementHandle(); return hnd && hnd.contentFrame(); };
+  const fa = await waitFor(() => upFrame('A'), 15000);
+  await waitFor(() => fa.evaluate(() => location.pathname === '/search'), 15000);
+  const fb = await waitFor(() => upFrame('B'), 15000);
+  const dupHidden = await waitFor(() => fb.evaluate(() => document.querySelectorAll('[data-xd-hide="shown in another column"]').length > 0), 20000);
+  check('dedupe: the second column hides posts the first one shows', !!dupHidden);
+  // Remove the first column: the posts it owned must show again in the second.
+  await up.locator('.col').first().locator('.icon-btn[aria-label="More"]').click();
+  await up.locator('.menu-item', { hasText: 'Remove column' }).click();
+  const dupGone = await waitFor(async () => {
+    const f = await upFrame('B');
+    return f && (await f.evaluate(() => document.querySelectorAll('[data-xd-hide="shown in another column"]').length === 0 && document.querySelectorAll('[data-testid="cellInnerDiv"]').length > 0));
+  }, 10000);
+  check('dedupe: posts hidden because of a removed column show again', !!dupGone);
+  await up.locator('.toast-action', { hasText: 'Undo' }).click();
+  await waitFor(() => up.locator('.col').count().then((n) => n === 2), 4000);
+  // Unread survives switching away from the workspace and back.
+  const fa2 = await waitFor(async () => { const f = await upFrame('A'); return f && (await f.evaluate(() => location.pathname === '/search' && !!document.getElementById('timeline'))) ? f : null; }, 15000);
+  await up.mouse.move(800, 20);
+  await sleep(6500);
+  await fa2.evaluate(() => {
+    const tl = document.getElementById('timeline');
+    const cell = tl.firstElementChild.cloneNode(true);
+    cell.querySelector('a[href="/bob/status/1001"]').setAttribute('href', '/bob/status/2020');
+    cell.querySelector('time').setAttribute('datetime', '2026-10-22T12:00:00.000Z');
+    cell.querySelector('[data-testid="tweetText"]').textContent = 'Fresh while away';
+    cell.querySelectorAll('.xd-collect').forEach((b) => b.remove());
+    tl.prepend(cell);
+  });
+  const upBadge = await waitFor(() => colBy('A').locator('.badge:not([hidden])').textContent(), 6000);
+  check('unread: column shows the new post before switching', upBadge === '1', String(upBadge));
+  await up.locator('.ws-tab', { hasText: 'WsB' }).click();
+  await sleep(500);
+  check('unread: the workspace tab keeps the count while it is unloaded', (await up.locator('.ws-tab', { hasText: 'WsA' }).locator('.ws-badge:not([hidden])').textContent().catch(() => '')) === '1');
+  await up.locator('.ws-tab', { hasText: 'WsA' }).click();
+  const back = await waitFor(() => colBy('A').locator('.badge:not([hidden])').textContent(), 6000);
+  check('unread: the count is still there after switching back', back === '1', String(back));
+  await up.close();
 
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {
