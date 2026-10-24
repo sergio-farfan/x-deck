@@ -1,185 +1,24 @@
 // Collections drawer: posts saved with the in-column bookmark-plus button.
 // Tags, notes, search, Markdown / CSV / JSON export, and JSON / CSV import.
+// The data logic (formats, validation, merging, write operations) lives in
+// collections-core.js; every write goes through the service worker.
 
 import { h, icon, iconButton, clear, relTime, downloadText, copyText, confirmDialog, toast } from './dom.js';
-import { getCollections, updateCollections } from './store.js';
-import { safeXUrl, cleanHandle } from './columns.js';
+import { getCollections, collectionOp } from './store.js';
+import { safeXUrl } from './columns.js';
+import {
+  toMarkdown, toCsv, parseCollectionFile, normalizeTag, IMPORT_MAX_BYTES, NOTE_MAX, TAGS_PER_POST,
+} from './collections-core.js';
+
+export {
+  toMarkdown, toCsv, parseCsv, parseCollectionFile, sanitizeItem, mergeCollections, applyCollectionOp,
+  IMPORT_MAX_BYTES, IMPORT_MAX_ITEMS,
+} from './collections-core.js';
+
+const PAGE = 100; // posts rendered at a time
 
 function stamp() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function fmtDate(iso) {
-  const d = iso ? new Date(iso) : null;
-  return d && Number.isFinite(d.getTime()) ? d.toISOString().replace('T', ' ').slice(0, 16) : '';
-}
-
-export function toMarkdown(items) {
-  const out = [`# XDeck collection (${stamp()})`, ''];
-  for (const it of items) {
-    out.push(`## ${it.name || it.handle} (@${it.handle}) · ${fmtDate(it.time)} UTC`, '');
-    for (const line of String(it.text || '').split('\n')) out.push(`> ${line}`);
-    if (it.quoteText) { out.push('>', '> Quoting:'); for (const line of it.quoteText.split('\n')) out.push(`> > ${line}`); }
-    out.push('');
-    const meta = [`[Open on X](${it.url})`];
-    if (it.tags && it.tags.length) meta.push(it.tags.map((t) => `#${t}`).join(' '));
-    if (it.metrics) meta.push(`${it.metrics.likes || 0} likes, ${it.metrics.reposts || 0} reposts, ${it.metrics.replies || 0} replies`);
-    out.push(meta.join(' · '));
-    if (it.note) out.push('', `Note: ${it.note}`);
-    out.push('', '---', '');
-  }
-  return out.join('\n');
-}
-
-function csvCell(v) {
-  let s = v == null ? '' : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // keep spreadsheets from evaluating cells as formulas
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export function toCsv(items) {
-  const cols = ['id', 'url', 'handle', 'name', 'time', 'text', 'quoteText', 'tags', 'note', 'likes', 'reposts', 'replies', 'savedAt', 'source'];
-  const rows = [cols.join(',')];
-  for (const it of items) {
-    const m = it.metrics || {};
-    rows.push([
-      it.id, it.url, it.handle, it.name, it.time, it.text, it.quoteText,
-      (it.tags || []).join(' '), it.note, m.likes, m.reposts, m.replies, it.savedAt, it.source,
-    ].map(csvCell).join(','));
-  }
-  return rows.join('\r\n');
-}
-
-// ---------- import ----------
-// Reads files written by the JSON or CSV export (Markdown is for reading, not
-// for round trips). Every field is validated: the file may come from anywhere.
-
-export const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
-const IMPORT_MAX_ITEMS = 20000;
-
-// RFC 4180-style parser: quoted fields, doubled quotes, CRLF or LF line ends.
-export function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
-      } else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') { row.push(field); field = ''; }
-    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-    else if (c !== '\r') field += c;
-  }
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows;
-}
-
-// Undo the export's spreadsheet-formula guard (a leading ' before = + - @).
-function unguard(v) {
-  return /^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v;
-}
-
-function str(v, max) {
-  return typeof v === 'string' ? v.slice(0, max) : v == null ? '' : String(v).slice(0, max);
-}
-
-function isoOr(v, fallback) {
-  const t = Date.parse(v);
-  return Number.isFinite(t) ? new Date(t).toISOString() : fallback;
-}
-
-function count(v) {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-function cleanTags(v) {
-  const list = Array.isArray(v) ? v : String(v || '').split(/[\s,]+/);
-  const out = [];
-  for (const t of list) {
-    const tag = String(t).trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase().slice(0, 30);
-    if (tag && !out.includes(tag)) out.push(tag);
-    if (out.length >= 20) break;
-  }
-  return out;
-}
-
-// One saved post from untrusted input, or null when it has no usable post id.
-export function sanitizeItem(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const fromUrl = String(raw.url || '').match(/\/status\/(\d{1,25})/);
-  const id = /^\d{1,25}$/.test(String(raw.id || '')) ? String(raw.id) : fromUrl ? fromUrl[1] : '';
-  if (!id) return null;
-  const handle = /^\w{1,15}$/.test(cleanHandle(raw.handle)) ? cleanHandle(raw.handle) : '';
-  const safe = safeXUrl(raw.url);
-  const url = safe && safe.includes(`/status/${id}`) ? safe : `https://x.com/${handle || 'i'}/status/${id}`;
-  const m = raw.metrics && typeof raw.metrics === 'object' ? raw.metrics : raw;
-  return {
-    id,
-    url,
-    handle,
-    name: str(raw.name, 100),
-    text: str(raw.text, 5000),
-    quoteText: str(raw.quoteText, 5000),
-    time: isoOr(raw.time, ''),
-    links: Array.isArray(raw.links) ? raw.links.filter((l) => typeof l === 'string' && /^https:\/\//.test(l)).slice(0, 10).map((l) => l.slice(0, 500)) : [],
-    hasMedia: raw.hasMedia === true || raw.hasMedia === 'true',
-    metrics: { likes: count(m.likes), reposts: count(m.reposts), replies: count(m.replies) },
-    savedAt: isoOr(raw.savedAt, new Date().toISOString()),
-    tags: cleanTags(raw.tags),
-    note: str(raw.note, 2000),
-    source: str(raw.source, 100),
-  };
-}
-
-// Returns { items, skipped } or throws with a message for the user.
-export function parseCollectionFile(name, text) {
-  const body = String(text || '').replace(/^\ufeff/, '');
-  const trimmed = body.trim();
-  let raws;
-  if (/\.json$/i.test(name) || /^[[{]/.test(trimmed)) {
-    let data;
-    try { data = JSON.parse(trimmed); } catch { throw new Error('That JSON file could not be read.'); }
-    raws = Array.isArray(data) ? data : data && (data.collections || data.items);
-    if (!Array.isArray(raws)) throw new Error('That JSON file has no list of saved posts.');
-  } else if (/\.csv$/i.test(name) || /^"?id"?,/.test(trimmed)) {
-    const rows = parseCsv(body).filter((r) => r.some((c) => c !== ''));
-    const header = (rows.shift() || []).map((c) => c.trim());
-    if (!header.includes('id') && !header.includes('url')) throw new Error('That CSV file has no id or url column.');
-    raws = rows.map((r) => Object.fromEntries(header.map((k, i) => [k, unguard(r[i] == null ? '' : r[i])])));
-  } else {
-    throw new Error('Use a JSON or CSV file exported from XDeck Collections.');
-  }
-  if (raws.length > IMPORT_MAX_ITEMS) throw new Error(`That file has more than ${IMPORT_MAX_ITEMS} posts.`);
-  const items = [];
-  let skipped = 0;
-  for (const r of raws) {
-    const it = sanitizeItem(r);
-    if (it) items.push(it); else skipped++;
-  }
-  return { items, skipped };
-}
-
-// Adds new posts and merges ones already saved (tags combined, an empty note
-// filled in); nothing already saved is overwritten. Newest saved first.
-export function mergeCollections(existing, incoming) {
-  const byId = new Map(existing.map((it) => [it.id, { ...it }]));
-  let added = 0;
-  let merged = 0;
-  for (const it of incoming) {
-    const cur = byId.get(it.id);
-    if (!cur) { byId.set(it.id, it); added++; continue; }
-    const tags = cleanTags([...(cur.tags || []), ...(it.tags || [])]);
-    const note = cur.note || it.note || '';
-    if (tags.length !== (cur.tags || []).length || note !== (cur.note || '')) merged++;
-    byId.set(it.id, { ...cur, tags, note });
-  }
-  const items = [...byId.values()].sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
-  return { items, added, merged };
 }
 
 export class CollectionsDrawer {
@@ -189,7 +28,10 @@ export class CollectionsDrawer {
     this.items = [];
     this.query = '';
     this.tag = '';
+    this.limit = PAGE;
     this.isOpen = false;
+    this.opener = null;
+    this.refocus = null;
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local' || !changes.collections) return;
       this.items = changes.collections.newValue || [];
@@ -200,17 +42,38 @@ export class CollectionsDrawer {
   async open() {
     this.items = await getCollections();
     this.isOpen = true;
+    this.opener = document.activeElement;
+    this.limit = PAGE;
     this.el.hidden = false;
     this.render();
+    if (this.searchEl) this.searchEl.focus(); // the drawer is last in the DOM; keyboard users need to land in it
   }
 
   close() {
+    if (!this.isOpen) return;
     this.isOpen = false;
     this.el.hidden = true;
+    const back = this.opener;
+    this.opener = null;
+    if (back && back.isConnected && typeof back.focus === 'function') back.focus();
   }
 
   toggle() {
     if (this.isOpen) this.close(); else this.open();
+  }
+
+  // Run a write through the service worker; shows the reason when it fails.
+  async write(op, failure = 'Could not save the change') {
+    try {
+      const result = await collectionOp(op);
+      // Show the new state now: the storage event can be held back while a box in the list has focus.
+      this.items = await getCollections();
+      if (this.isOpen) this.renderList();
+      return result;
+    } catch (err) {
+      toast(`${failure}: ${err && err.message ? err.message : err}`, 6000);
+      return null;
+    }
   }
 
   render() {
@@ -223,7 +86,12 @@ export class CollectionsDrawer {
     });
     this.countEl = h('span', { class: 'muted' });
     const search = h('input', { class: 'input', type: 'search', placeholder: 'Search saved posts, @handles, #tags', value: this.query, 'aria-label': 'Search collections' });
-    search.addEventListener('input', () => { this.query = search.value; this.renderList(); });
+    let searchTimer = 0;
+    search.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { this.query = search.value; this.limit = PAGE; this.renderList(); }, 150);
+    });
+    this.searchEl = search;
     this.tagsEl = h('div', { class: 'chips tag-filter' });
     this.listEl = h('div', { class: 'coll-list' });
     this.listEl.addEventListener('focusout', () => setTimeout(() => {
@@ -267,14 +135,15 @@ export class CollectionsDrawer {
   renderList() {
     if (!this.listEl) return;
     this.dirty = false;
+    const tags = [...new Set(this.items.flatMap((it) => it.tags || []))].sort();
+    if (this.tag && !tags.includes(this.tag)) this.tag = ''; // the tag was removed: do not leave an invisible filter on
     const items = this.filtered();
     this.countEl.textContent = `${items.length} of ${this.items.length} saved`;
-    const tags = [...new Set(this.items.flatMap((it) => it.tags || []))].sort();
     clear(this.tagsEl);
     if (tags.length) {
-      this.tagsEl.append(h('button', { type: 'button', class: `chip${this.tag ? '' : ' on'}`, onclick: () => { this.tag = ''; this.renderList(); } }, 'All'));
+      this.tagsEl.append(h('button', { type: 'button', class: `chip${this.tag ? '' : ' on'}`, onclick: () => { this.tag = ''; this.limit = PAGE; this.renderList(); } }, 'All'));
       for (const t of tags) {
-        this.tagsEl.append(h('button', { type: 'button', class: `chip${this.tag === t ? ' on' : ''}`, onclick: () => { this.tag = this.tag === t ? '' : t; this.renderList(); } }, `#${t}`));
+        this.tagsEl.append(h('button', { type: 'button', class: `chip${this.tag === t ? ' on' : ''}`, onclick: () => { this.tag = this.tag === t ? '' : t; this.limit = PAGE; this.renderList(); } }, `#${t}`));
       }
     }
     clear(this.listEl);
@@ -282,28 +151,47 @@ export class CollectionsDrawer {
       this.listEl.append(h('div', { class: 'coll-empty' },
         h('p', null, this.items.length ? 'No saved posts match.' : 'Nothing saved yet.'),
         h('p', { class: 'muted' }, 'Use the bookmark-plus button in any post\'s action bar to save it here.')));
-      return;
+    } else {
+      for (const it of items.slice(0, this.limit)) this.listEl.append(this.itemEl(it));
+      if (items.length > this.limit) {
+        this.listEl.append(h('div', { class: 'coll-more' },
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { this.limit += PAGE; this.renderList(); } }, `Show ${Math.min(PAGE, items.length - this.limit)} more (${items.length - this.limit} not shown)`)));
+      }
     }
-    for (const it of items) this.listEl.append(this.itemEl(it));
+    this.applyRefocus();
+  }
+
+  // After a re-render the focused control is gone; put focus on its replacement.
+  applyRefocus() {
+    const r = this.refocus;
+    this.refocus = null;
+    if (!r || !this.isOpen) return;
+    let target = null;
+    if (r.kind === 'tag') {
+      const item = [...this.listEl.querySelectorAll('.coll-item')].find((n) => n.dataset.id === r.id);
+      target = item && item.querySelector('.tag-input');
+    }
+    (target || this.searchEl).focus();
   }
 
   itemEl(it) {
     const url = safeXUrl(it.url) || 'https://x.com/';
-    const update = (fn) => updateCollections((list) => {
-      const x = list.find((i) => i.id === it.id);
-      if (x) fn(x);
-      return list;
-    });
+    const patch = async (fields, refocus) => {
+      this.refocus = refocus || null;
+      await this.write({ kind: 'patch', id: it.id, ...fields });
+    };
     const tagInput = h('input', { class: 'tag-input', type: 'text', placeholder: '+ tag', 'aria-label': 'Add tag' });
     tagInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      const t = tagInput.value.trim().replace(/^#/, '').replace(/\s+/g, '-').toLowerCase().slice(0, 30);
-      if (t) update((x) => { x.tags = [...new Set([...(x.tags || []), t])]; }).then(() => this.renderList());
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+      const t = normalizeTag(tagInput.value);
+      if (!t) return;
+      if ((it.tags || []).length >= TAGS_PER_POST) { toast(`A post can have ${TAGS_PER_POST} tags at most`); return; }
+      patch({ tags: [...new Set([...(it.tags || []), t])] }, { kind: 'tag', id: it.id });
     });
-    const note = h('textarea', { class: 'input note', rows: 2, placeholder: 'Note' });
+    const note = h('textarea', { class: 'input note', rows: 2, placeholder: 'Note', maxlength: String(NOTE_MAX) });
     note.value = it.note || '';
-    note.addEventListener('change', () => update((x) => { x.note = note.value.trim(); }));
-    return h('article', { class: 'coll-item' },
+    note.addEventListener('change', () => patch({ note: note.value.trim() }));
+    return h('article', { class: 'coll-item', dataset: { id: it.id } },
       h('div', { class: 'coll-meta' },
         h('strong', null, it.name || it.handle),
         h('span', { class: 'muted' }, ` @${it.handle} · ${relTime(it.time)}`),
@@ -312,27 +200,27 @@ export class CollectionsDrawer {
       it.quoteText ? h('div', { class: 'coll-quote' }, it.quoteText) : null,
       h('div', { class: 'coll-tags' },
         (it.tags || []).map((t) => h('span', { class: 'tag' }, `#${t}`,
-          h('button', { type: 'button', class: 'tag-x', title: `Remove #${t}`, 'aria-label': `Remove tag ${t}`, onclick: () => update((x) => { x.tags = (x.tags || []).filter((y) => y !== t); }) }, '×'))),
+          h('button', { type: 'button', class: 'tag-x', title: `Remove #${t}`, 'aria-label': `Remove tag ${t}`, onclick: () => patch({ tags: (it.tags || []).filter((y) => y !== t) }, { kind: 'tag', id: it.id }) }, '×'))),
         tagInput),
       note,
       h('div', { class: 'coll-actions' },
-        iconButton('panel', 'Open in reading pane', () => this.openReader(url), { size: 16 }),
+        iconButton('panel', 'Open in reading pane', () => { this.close(); this.openReader(url); }, { size: 16 }),
         h('a', { class: 'icon-btn', href: url, target: '_blank', rel: 'noopener', title: 'Open in new tab', 'aria-label': 'Open in new tab' }, icon('external', 16)),
         iconButton('copy', 'Copy link', () => copyText(url), { size: 16 }),
         iconButton('list', 'Copy as Markdown', () => copyText(toMarkdown([it])), { size: 16 }),
-        iconButton('trash', 'Remove from collection', () => updateCollections((list) => list.filter((x) => x.id !== it.id)), { size: 16, class: 'danger' })));
+        iconButton('trash', 'Remove from collection', () => { this.refocus = { kind: 'search' }; this.write({ kind: 'remove', id: it.id }); }, { size: 16, class: 'danger' })));
   }
 
   export(kind) {
     const items = this.filtered();
     if (!items.length) { toast('Nothing to export'); return; }
     if (kind === 'md') downloadText(`xdeck-collection-${stamp()}.md`, toMarkdown(items), 'text/markdown');
-    else if (kind === 'csv') downloadText(`xdeck-collection-${stamp()}.csv`, `﻿${toCsv(items)}`, 'text/csv');
+    else if (kind === 'csv') downloadText(`xdeck-collection-${stamp()}.csv`, `\ufeff${toCsv(items)}`, 'text/csv');
     else downloadText(`xdeck-collection-${stamp()}.json`, JSON.stringify(items, null, 2), 'application/json');
   }
 
   async importFile(file) {
-    if (file.size > IMPORT_MAX_BYTES) { toast('That file is too large to import (20 MB maximum)', 5000); return; }
+    if (file.size > IMPORT_MAX_BYTES) { toast(`That file is too large to import (${Math.round(IMPORT_MAX_BYTES / 1048576)} MB maximum; XDeck's storage holds 10 MB)`, 6000); return; }
     let parsed;
     try {
       parsed = parseCollectionFile(file.name, await file.text());
@@ -341,25 +229,20 @@ export class CollectionsDrawer {
       return;
     }
     if (!parsed.items.length) { toast('No saved posts found in that file', 5000); return; }
-    let result;
-    try {
-      await updateCollections((list) => { result = mergeCollections(list, parsed.items); return result.items; });
-    } catch (err) {
-      toast(`Import failed: ${err && err.message ? err.message : err}`, 6000);
-      return;
-    }
+    const result = await this.write({ kind: 'merge', items: parsed.items }, 'Import failed');
+    if (!result) return;
     const parts = [`${result.added} new`];
     if (result.merged) parts.push(`${result.merged} merged`);
     const same = parsed.items.length - result.added - result.merged;
     if (same > 0) parts.push(`${same} already saved`);
     if (parsed.skipped) parts.push(`${parsed.skipped} skipped (no post id)`);
+    if (parsed.cut) parts.push(`${parsed.cut} shortened (over the length limits)`);
     toast(`Imported: ${parts.join(', ')}`, 5000);
   }
 
   async clearAll() {
     if (!this.items.length) return;
     if (!(await confirmDialog(`Remove all ${this.items.length} saved posts?`, { okLabel: 'Remove all', danger: true }))) return;
-    await updateCollections(() => []);
-    toast('Collection cleared');
+    if (await this.write({ kind: 'clear' }, 'Could not clear')) toast('Collection cleared');
   }
 }

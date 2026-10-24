@@ -486,6 +486,7 @@ class ColumnView {
       case 'reloadRequest': this.reloadQuietly(); break;
       case 'refreshResult': this.onRefreshResult(!!m.done, m.reason); break;
       case 'bootFailed': this.showRefused(this.url); break;
+      case 'collectFailed': toast(`Could not save the post: ${String(m.error || '').slice(0, 200)}`, 7000); break;
       case 'posts': onPosts(this, m); break;
       case 'read': this.setUnread(0); break;
       case 'focus': setActiveColumn(this.col.id, false); break;

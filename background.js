@@ -7,6 +7,8 @@
 // - Relays desktop notifications for keyword alerts and keeps the badge in sync.
 // - Context menus: add an x.com page/link as a column, search a selection.
 
+import { applyCollectionOp } from './src/collections-core.js';
+
 const DECK_URL = 'https://x.com/i/xdeck';
 // twitter.com links still get the "add as column" menu (they redirect to x.com);
 // no host permission is needed for menu patterns.
@@ -157,7 +159,40 @@ function setBadge(count) {
 
 // ---------- messages from the deck page ----------
 
+// ---------- collections: the only writer ----------
+// The deck's drawer and the save button in every column all ask this worker to
+// change the collection, and the changes run one after another, so a read-modify-write
+// in one context can never wipe another's.
+
+let collectionQueue = Promise.resolve();
+
+function runCollectionOp(op) {
+  const run = collectionQueue.then(async () => {
+    const { collections = [] } = await chrome.storage.local.get('collections');
+    const { list, result } = applyCollectionOp(Array.isArray(collections) ? collections : [], op);
+    await chrome.storage.local.set({ collections: list });
+    return result;
+  });
+  collectionQueue = run.catch(() => {});
+  return run;
+}
+
+function friendlyStorageError(err) {
+  const msg = String((err && err.message) || err || '');
+  if (/quota/i.test(msg)) return "XDeck's storage is full (10 MB). Export your collection, then remove posts you no longer need.";
+  return msg.slice(0, 200) || 'unknown error';
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'collections') {
+    // Only XDeck's own content scripts (deck page and column frames on x.com) may change the collection.
+    if (sender.id !== chrome.runtime.id || !sender.tab || typeof sender.url !== 'string' || !sender.url.startsWith('https://x.com/')) return false;
+    runCollectionOp(msg.op).then(
+      (result) => sendResponse({ ok: true, result }),
+      (err) => sendResponse({ ok: false, error: friendlyStorageError(err) }),
+    );
+    return true;
+  }
   // A prerendered or cached deck page must not claim the tab; tell it to wait.
   if (msg && msg.type === 'registerDeck' && sender.id === chrome.runtime.id
       && typeof sender.url === 'string' && sender.url.startsWith(DECK_URL)

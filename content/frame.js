@@ -491,20 +491,17 @@
     const article = e.currentTarget.closest(Core.SEL.article);
     const post = article && Core.parseArticle(article);
     if (!post) return;
-    const { collections = [] } = await chrome.storage.local.get('collections');
-    const i = collections.findIndex((c) => c.id === post.id);
-    if (i >= 0) {
-      collections.splice(i, 1);
-    } else {
-      collections.unshift({
-        id: post.id, url: post.url, handle: post.handle, name: post.name,
-        text: post.text, quoteText: post.quoteText, time: post.time, links: post.links,
-        hasMedia: post.hasMedia, metrics: post.metrics,
-        savedAt: new Date().toISOString(), tags: [], note: '',
-        source: (state.column && state.column.label) || location.pathname,
-      });
-    }
-    await chrome.storage.local.set({ collections });
+    // The service worker applies every collection change, one at a time.
+    const item = {
+      id: post.id, url: post.url, handle: post.handle, name: post.name,
+      text: post.text, quoteText: post.quoteText, time: post.time, links: post.links,
+      hasMedia: post.hasMedia, metrics: post.metrics,
+      savedAt: new Date().toISOString(), tags: [], note: '',
+      source: (state.column && state.column.label) || location.pathname,
+    };
+    let res = null;
+    try { res = await chrome.runtime.sendMessage({ type: 'collections', op: { kind: 'toggle', item } }); } catch { res = null; }
+    if (!res || !res.ok) send({ type: 'collectFailed', error: String((res && res.error) || 'the extension did not answer') });
   }
 
   // ---------- reading pane ----------

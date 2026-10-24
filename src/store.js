@@ -257,12 +257,14 @@ export async function getCollections() {
   return collections;
 }
 
-// Read-modify-write so edits from the deck and from in-column buttons don't clobber each other.
-export async function updateCollections(fn) {
-  const current = await getCollections();
-  const next = fn(current.slice()) || current;
-  await chrome.storage.local.set({ collections: next });
-  return next;
+// Every change to the collection is applied by the service worker, one at a time
+// (see applyCollectionOp), so the deck and the save buttons in every column can
+// never overwrite each other. Resolves with the operation's result or throws a
+// readable Error (for example when the 10 MB storage quota is full).
+export async function collectionOp(op) {
+  const res = await chrome.runtime.sendMessage({ type: 'collections', op });
+  if (!res || !res.ok) throw new Error((res && res.error) || 'the extension did not answer');
+  return res.result || {};
 }
 
 // Context-menu and notification actions arrive as one storage key per item

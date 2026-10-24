@@ -182,6 +182,13 @@ trends modules, Premium upsells and Grok buttons. Home columns open on the chron
 - **Import** a JSON or CSV export (Collections > Import), for example to move saved posts to another
   browser or profile. Posts are matched by post ID: new ones are added, ones you already have keep
   their note and gain any new tags, and nothing is overwritten. Markdown is for reading, not import.
+  Files up to 8 MB and 10,000 posts (XDeck's storage holds 10 MB in total); long posts are kept up to
+  25,000 characters and notes up to 2,000, and the message says how many were shortened.
+- Every change to the collection (the save button in a column, tags, notes, import, clear) is applied
+  by the extension's background worker one at a time, so two columns saving at once cannot lose each
+  other's changes. If storage is full, you get a message instead of a silent failure.
+- The drawer shows 100 posts at a time ("Show more"), opens with focus in its search box and returns
+  focus when closed.
 
 **Right-click menus**
 - On any x.com page or link: "Add as an XDeck column".
@@ -247,7 +254,8 @@ src/deck.js            deck app: workspaces, columns, layouts, reading pane, com
 src/columns.js         column types, URL building, search-query builder
 src/store.js           settings, workspaces, collections (chrome.storage.local)
 src/dialogs.js         add/edit column, settings, help
-src/collections.js     collections drawer and exports
+src/collections.js     collections drawer UI
+src/collections-core.js collections formats, import validation, merging and write operations (no DOM)
 src/dom.js             DOM helpers (no innerHTML), icons, dialogs, menus, toasts
 tools/make_icons.py    regenerates icons/ (no dependencies)
 tests/                 unit tests and Playwright end-to-end tests with an X markup fixture

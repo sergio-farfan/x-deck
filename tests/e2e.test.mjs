@@ -325,6 +325,7 @@ try {
   await page.locator('.rail-btn[aria-label^="Collections"]').click();
   await page.waitForSelector('.coll-item');
   check('collections: drawer lists the saved post', (await page.locator('.coll-item .coll-text').first().textContent()).includes('Hello world'));
+  check('collections: opening the drawer puts keyboard focus in its search box', (await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('aria-label'))) === 'Search collections');
   await page.locator('.tag-input').first().fill('launch');
   await page.locator('.tag-input').first().press('Enter');
   await waitFor(() => page.locator('.coll-item .tag', { hasText: '#launch' }).count(), 4000);
@@ -352,6 +353,11 @@ try {
   check('collections import: unsupported file refused with a message', !!(await waitFor(() => page.locator('.toast', { hasText: 'JSON or CSV' }).count(), 4000)));
   // Back to one saved post for the checks that follow.
   await sw.evaluate(() => chrome.storage.local.get('collections').then(({ collections }) => chrome.storage.local.set({ collections: collections.filter((c) => c.id === '1001') })));
+  // A tag filter must not stay on after its last post loses the tag.
+  await page.locator('.tag-filter .chip', { hasText: '#launch' }).click();
+  await page.locator('.coll-item .tag', { hasText: '#launch' }).locator('.tag-x').click();
+  await waitFor(() => page.locator('.coll-item').count(), 4000);
+  check('collections: removing the last post with the selected tag does not leave an empty, filtered list', await page.locator('.coll-item').count() >= 1 && (await page.locator('.drawer-head .muted').textContent()).startsWith('1 of 1'), await page.locator('.drawer-head .muted').textContent());
   await page.screenshot({ path: path.join(outDir, '2-collections.png') });
   await page.keyboard.press('Escape');
 
