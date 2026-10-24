@@ -20,22 +20,34 @@
     userCell: '[data-testid="UserCell"]',
   };
 
-  // Counter text to a number across X locales: "1.2K", "3,456", "1,2 mil",
-  // "1.234", "12 Mio.", "1.5万".
+  // Counter text to a number across X locales: "1.2K", "3,456", "1,2 mil", "1.234",
+  // "12 Mio.", "12 тыс.", "1,2 tys.", "1.5万", "1.2천". A suffix that is not recognised
+  // gives NaN, and the thresholds in evaluate() ignore a count that is NaN (a post is
+  // never hidden for a number that could not be read).
   const SUFFIX = [
-    [/^(k|mil|tsd\.?|k\.)$/i, 1e3],
-    [/^(m|mio\.?|mill?\.?|millones|mi|mln)$/i, 1e6],
-    [/^(b|bn|mrd\.?)$/i, 1e9],
-    [/^万$/, 1e4],
-    [/^億$/, 1e8],
+    [/^(k|mil|tsd\.?|тыс\.?|тис\.?|tys\.?|tis\.?|tisíc|천|千)$/i, 1e3],
+    [/^(m|mio\.?|mill?\.?|millones|mi|mln\.?|млн\.?|mn)$/i, 1e6],
+    [/^(b|bn|mrd\.?|млрд\.?|mld\.?|mr)$/i, 1e9],
+    [/^(万|만)$/, 1e4],
+    [/^(億|억|亿)$/, 1e8],
   ];
-  function num(s) {
+  function num(s, lang) {
     if (!s) return 0;
-    const m = String(s).replace(/\u00a0/g, ' ').match(/(\d[\d.,\s]*\d|\d)\s*([A-Za-z\u4e00-\u9fff.]+)?/);
+    const m = String(s).replace(/ /g, ' ').match(/(\d[\d.,\s]*\d|\d)\s*([\p{L}.]+)?/u);
     if (!m) return 0;
     let digits = m[1].replace(/\s/g, '');
     const suffix = (m[2] || '').trim();
-    const mult = (SUFFIX.find(([re]) => re.test(suffix)) || [null, 1])[1];
+    const ui = String(lang !== undefined ? lang : (globalThis.document && document.documentElement.lang) || '').toLowerCase();
+    let mult = 1;
+    if (suffix) {
+      // Turkish writes "12 B" for 12 thousand (bin); everywhere else B is billions.
+      if (/^tr/.test(ui) && /^b$/i.test(suffix)) mult = 1e3;
+      else {
+        const hit = SUFFIX.find(([re]) => re.test(suffix));
+        if (!hit) return NaN;
+        mult = hit[1];
+      }
+    }
     const lastDot = digits.lastIndexOf('.');
     const lastComma = digits.lastIndexOf(',');
     if (lastDot >= 0 && lastComma >= 0) {
@@ -48,7 +60,7 @@
       digits = thousands ? parts.join('') : parts.join('.');
     }
     const n = parseFloat(digits);
-    return Number.isFinite(n) ? Math.round(n * mult) : 0;
+    return Number.isFinite(n) ? Math.round(n * mult) : NaN;
   }
 
   // Text including emoji, which X renders as <img alt="...">.
@@ -91,7 +103,8 @@
 
   const AD_LABELS = new Set(['Ad', 'Promoted', 'Anuncio', 'Promocionado', 'Publicidad', 'Promovido', 'Sponsorisé',
     'Sponsorisée', 'Annonce', 'Anzeige', 'Gesponsert', 'Annuncio', 'Sponsorizzato', 'Advertentie', 'Gesponsord',
-    'Reklama', 'Reklam', '広告', 'プロモーション', '광고', '推广', '廣告']);
+    'Reklama', 'Reklam', '広告', 'プロモーション', '광고', '推广', '廣告', 'Реклама', 'Промо', 'إعلان', 'ممول', 'विज्ञापन',
+    'โฆษณา', 'Quảng cáo', 'Iklan', 'Annons', 'Annonse', 'Mainos', 'מודעה', 'Mainos', 'Reklám', 'Reclamă', 'Διαφήμιση']);
 
   function hasAdLabel(article) {
     const spans = article.querySelectorAll('span');
@@ -130,8 +143,31 @@
     return out;
   }
 
-  const REPLY_RE = /^(Replying to|En respuesta a|Em resposta a|En réponse à|Antwort an|In risposta a)\b/i;
-  const REPOST_RE = /repost|retweet|reposte|retwe|republi/i;
+  // The phrase is followed by a space or an @, never \b: "à" is not a word character, so
+  // \b after "En réponse à" never matched. Other languages are caught structurally below.
+  const REPLY_RE = /^(Replying to|En respuesta a|Em resposta a|En réponse à|Antwort an|In risposta a|Antwoord aan|Odpowiadasz|Svarar|Svar til|Vastaus|Yanıt olarak)(?=[\s@]|$)/i;
+  const REPOST_RE = /repost|retweet|reposte|retwe|republi|リポスト|リツイート|재게시|리트윗|转推|轉推|转发|Репост|репостнул|ретвит|إعادة|रीपोस्ट/i;
+
+  // "Replying to @a @b" in any language: a short line before the post text made of a
+  // phrase plus profile links that read @handle, outside the name block and any quote.
+  function structuralReply(article, textEl, quote) {
+    for (const d of article.querySelectorAll('div')) {
+      if (d.childElementCount < 1 || d.childElementCount > 6) continue;
+      if (d.closest(SEL.userName) || d.querySelector(SEL.userName) || d.querySelector('time')) continue;
+      if ((textEl && (textEl.contains(d) || d.contains(textEl))) || (quote && quote.contains(d))) continue;
+      if (textEl && !(d.compareDocumentPosition(textEl) & 4)) continue; // must come before the text
+      const links = [...d.children].filter((c) => c.tagName === 'A');
+      if (!links.length || links.length !== d.childElementCount) {
+        // the phrase may sit in a span next to the links
+        const others = [...d.children].filter((c) => c.tagName !== 'A');
+        if (!links.length || others.some((c) => c.tagName !== 'SPAN' || c.querySelector('a'))) continue;
+      }
+      if (!links.every((a) => /^@\w{1,15}$/.test(a.textContent.trim()) && /^\/\w{1,15}$/.test(a.getAttribute('href') || ''))) continue;
+      const phrase = d.textContent.replace(/@\w{1,15}/g, '').replace(/[\s,:;&]+/g, ' ').trim();
+      if (phrase.length > 0 && phrase.length <= 40) return true;
+    }
+    return false;
+  }
 
   function parseArticle(article) {
     const href = permalink(article);
@@ -160,6 +196,7 @@
       if (t.length > 160) continue;
       if (REPLY_RE.test(t.trim())) { isReply = true; break; }
     }
+    if (!isReply) isReply = structuralReply(article, textEl, quote);
     const time = own(article, 'time');
     const tcoLinks = textEl ? [...textEl.querySelectorAll('a[href^="https://t.co/"]')].map((a) => a.getAttribute('href')) : [];
     return {
@@ -171,7 +208,8 @@
       quoteText,
       lang: textEl ? textEl.getAttribute('lang') || '' : '',
       time: time ? time.getAttribute('datetime') : '',
-      isRepost: !!social && REPOST_RE.test(socialText),
+      // A repost's context line links to the reposter's profile whatever the language.
+      isRepost: !!social && (REPOST_RE.test(socialText) || !!(socialLink && /^\/\w{1,15}$/.test(socialLink.getAttribute('href') || ''))),
       reposter: socialLink && socialLink.getAttribute('href') ? socialLink.getAttribute('href').replace(/^\//, '').split('/')[0] : '',
       socialText,
       isReply,
@@ -213,7 +251,8 @@
   }
 
   // Scripts written without spaces between words: match these terms anywhere.
-  const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+  // Hangul is spaced but attaches particles to nouns (삼성이, 삼성은), so it is matched as a substring too.
+  const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
   // ---------- regex safety ----------
   // A user /regex/ term runs on the page's main thread for every post, and
@@ -313,10 +352,12 @@
     if (f.hideQuotes && post.isQuote) return 'quote';
     if (f.onlyVerified && !post.verified) return 'not verified';
     if (f.hideVerified && post.verified) return 'verified';
+    // A count that could not be read (NaN) never hides a post.
     if (+f.minLikes > 0 && post.metrics.likes < +f.minLikes) return 'few likes';
     if (+f.minReposts > 0 && post.metrics.reposts < +f.minReposts) return 'few reposts';
     if (+f.minReplies > 0 && post.metrics.replies < +f.minReplies) return 'few replies';
-    if (cf.langs.size && post.lang && !cf.langs.has(post.lang.toLowerCase())) return 'language';
+    // X tags posts that are only emoji, links or mentions as und/zxx/q..: that is not another language.
+    if (cf.langs.size && post.lang && !/^(und|zxx|q[a-z]{2})$/i.test(post.lang) && !cf.langs.has(post.lang.toLowerCase())) return 'language';
     return null;
   }
 

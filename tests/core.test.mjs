@@ -89,6 +89,31 @@ const results = await page.evaluate(() => {
   ], [null, 'excluded word', 'excluded word']);
   eq('a /path/-looking term is a plain word, not a dropped regex', C.evaluate({ ...victim, text: 'see /r/politics today' }, C.compileFilters({ exclude: '/r/politics' }, '')), 'excluded word');
   eq('an uncompilable regex is skipped, not run', C.evaluate({ ...victim, text: 'x ( y' }, C.compileFilters({ exclude: '/(unclosed/' }, '')), null);
+  // ---- non-English counts, replies, reposts, ads ----
+  eq('num: Cyrillic, Hangul, Polish, Czech and Turkish suffixes', [
+    C.num('12 \u0442\u044b\u0441.', 'ru'), C.num('1,2 \u0442\u044b\u0441.', 'ru'), C.num('3,4 \u043c\u043b\u043d', 'ru'), C.num('1.2\uc2dc'.replace('\uc2dc', '\ucc9c'), 'ko'), C.num('1.2\ub9cc', 'ko'),
+    C.num('3\uc5b5', 'ko'), C.num('1,2 tys.', 'pl'), C.num('1,2 tis.', 'cs'), C.num('1,2 Mn', 'tr'), C.num('12 B', 'tr'), C.num('12 B', 'en'),
+  ], [12000, 1200, 3400000, 1200, 12000, 300000000, 1200, 1200, 1200000, 12000, 12000000000]);
+  eq('num: an unknown suffix is NaN, never a wrong number', Number.isNaN(C.num('12 zzz', 'en')), true);
+  eq('filters: a count that could not be read never hides a post', ev({ ...p4, metrics: { likes: NaN, reposts: 0, replies: 0 } }, { minLikes: 100 }), null);
+  const withReplyRow = (phrase) => {
+    const a = a1.cloneNode(true);
+    const row = [...a.querySelectorAll('div')].find((d) => d.firstChild && d.firstChild.nodeType === 3 && /^Replying to/.test(d.firstChild.textContent.trim()));
+    row.firstChild.textContent = phrase;
+    return a;
+  };
+  eq('reply: French "En r\u00e9ponse \u00e0" (the old \\b never matched)', C.parseArticle(withReplyRow('En r\u00e9ponse \u00e0 ')).isReply, true);
+  eq('reply: Japanese, Arabic and Hindi are recognised structurally', ['\u8fd4\u4fe1\u5148: ', '\u0631\u062f\u0627 \u0639\u0644\u0649 ', '\u091c\u0935\u093e\u092c '].map((ph) => C.parseArticle(withReplyRow(ph)).isReply), [true, true, true]);
+  eq('reply: an ordinary post is not a reply', [C.parseArticle(a4).isReply, C.parseArticle(a2).isReply], [false, false]);
+  const asMentionPost = a4.cloneNode(true);
+  asMentionPost.querySelector('[data-testid="tweetText"]').innerHTML = '<a href="/carol">@carol</a> look at this';
+  eq('reply: a post that starts with a mention is not a reply', C.parseArticle(asMentionPost).isReply, false);
+  const repostOf = (word) => { const a = a2.cloneNode(true); a.querySelector('[data-testid="socialContext"]').textContent = word; return C.parseArticle(a).isRepost; };
+  eq('repost: Japanese, Korean and Russian words, and any language through the profile link', [repostOf('\u30ea\u30dd\u30b9\u30c8\u3057\u307e\u3057\u305f'), repostOf('\uc7ac\uac8c\uc2dc\ud588\uc2b5\ub2c8\ub2e4'), repostOf('\u0420\u0435\u043f\u043e\u0441\u0442'), repostOf('zzz')], [true, true, true, true]);
+  const adWith = (label) => { const a = a3.cloneNode(true); [...a.querySelectorAll('span')].find((x) => x.textContent.trim() === 'Ad').textContent = label; return C.isPromoted(a); };
+  eq('ads: labels in more languages; ordinary words are not ads', [adWith('\u0420\u0435\u043a\u043b\u0430\u043c\u0430'), adWith('\u0625\u0639\u0644\u0627\u0646'), adWith('\u0e42\u0e06\u0e29\u0e13\u0e32'), adWith('Hello')], [true, true, true, false]);
+  eq('filters: a Korean mute word matches with attached particles', ev({ ...p4, text: '\uc0bc\uc131\uc774 \ubc1c\ud45c\ud588\ub2e4' }, { exclude: '\uc0bc\uc131' }), 'excluded word');
+  eq('filters: posts tagged und/zxx are not "another language"', ['und', 'zxx', 'qme', 'es'].map((l) => ev({ ...p4, lang: l }, { lang: 'en' })), [null, null, null, 'language']);
   window.__guardTable = ['/(a+)+$/', '/a{1,3}/', '/(foo|bar)+/', '/(foo|bar)?/', '/\\bword\\b/', '/.*.*x/', '/.*.*.*x/', '/[a+]+[b*]+/', '/(?=.*a)(?=.*b)/', '/(ab)\\1/', '/x'.padEnd(220, 'x') + '/', '/r/politics', '/(unclosed/', 'plain', '/a/gi', '/a/zz']
     .map((term) => [term, C.regexTermProblem(term)]);
   return t;

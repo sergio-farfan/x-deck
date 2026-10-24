@@ -810,7 +810,7 @@ try {
   const cFrame = await waitFor(async () => {
     const hnd = await ui.locator('#composer iframe').elementHandle();
     const fr = hnd && await hnd.contentFrame();
-    return fr && (await fr.evaluate(() => location.pathname)) === '/compose/post' ? fr : null;
+    return fr && (await fr.evaluate(() => location.pathname === '/compose/post' && document.readyState !== 'loading' && !!document.body)) ? fr : null;
   }, 20000);
   await cFrame.evaluate(() => { const d = document.createElement('div'); d.setAttribute('data-testid', 'tweetTextarea_0'); d.setAttribute('contenteditable', 'true'); d.textContent = 'unsent draft'; document.body.appendChild(d); });
   await ui.locator('.rail-btn.compose').click();

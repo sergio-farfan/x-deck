@@ -222,6 +222,12 @@ trends modules, Premium upsells and Grok buttons. Home columns open on the chron
 - **Alerts, unread counts and auto refresh need the deck tab open.** It can be in the background.
 - **Columns use X's theme and font size** (x.com > Settings > Accessibility, display and languages >
   Display). Use Cmd/Ctrl + and - to zoom the whole deck.
+- **Language coverage.** Counts such as "12 тыс.", "1.2천" or "12 Mio." are understood in many
+  languages (a count that cannot be read never hides a post). "Hide replies", "Hide reposts" and ad
+  detection use the words of English, several European languages, Japanese, Korean, Chinese,
+  Russian, Arabic and Hindi plus language-independent structure (the reply line, the repost
+  context's profile link), so they also work in most other languages. "Hide trends" and "Who to
+  follow" headings are matched in English only, with a structural fallback for suggestions.
 - **X changes its markup from time to time.** Every selector XDeck depends on lives in
   `content/core.js` (`SEL`) and `content/frame.css`. If X changes markup, filters or clean mode may
   stop matching until those are updated. The columns themselves keep working.

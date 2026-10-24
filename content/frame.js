@@ -169,7 +169,8 @@
     setRootClass('xd-h-wtf', active && def(c.hideWhoToFollow, true));
     setRootClass('xd-h-views', active && def(c.hideViews, false));
     setRootClass('xd-h-composer', active && def(c.hideComposer, true));
-    setRootClass('xd-h-trends', active && def(c.hideTrends, true));
+    // Explore columns ARE the trends: never blank them out.
+    setRootClass('xd-h-trends', active && def(c.hideTrends, true) && !(state.column && state.column.type === 'explore'));
     setRootClass('xd-h-premium', active && def(c.hidePremium, true));
     setRootClass('xd-h-grok', active && def(c.hideGrok, true));
     setRootClass('xd-h-toptabs', inDeck && def(c.hideTopTabs, false));
@@ -255,7 +256,7 @@
     const h2 = cell.querySelector('h2');
     const heading = h2 ? h2.textContent : '';
     if (heading && WTF_RE.test(heading)) return 'wtf';
-    if (heading && TRENDS_RE.test(heading)) return 'trends';
+    if (heading && TRENDS_RE.test(heading) && !(state.column && state.column.type === 'explore')) return 'trends';
     if (cell.querySelector('a[href^="/i/connect_people"]')) return 'wtf';
     if (cell.querySelector('a[href^="/i/premium"], a[href^="/i/verified-choose"]')) return 'premium';
     if (cell.querySelector(Core.SEL.userCell)) {
