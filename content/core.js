@@ -215,9 +215,56 @@
   // Scripts written without spaces between words: match these terms anywhere.
   const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
+  // ---------- regex safety ----------
+  // A user /regex/ term runs on the page's main thread for every post, and
+  // JavaScript regexes can backtrack exponentially. This is a conservative
+  // static check (not a proof): it refuses patterns that are long, use
+  // backreferences, repeat a group that holds a repeat or an alternation
+  // ((a+)+, (\w+\s?)*, (a|aa)+), or stack more than two unbounded repeats
+  // (.*.*.*x). The text matched is also capped (MAX_HAY). src/terms.js holds an
+  // identical copy for the editor; tests/core.test.mjs keeps the two in step.
+  const MAX_REGEX = 200;
+  const MAX_HAY = 1500;
+  const REGEX_FLAGS = /^[dgimsuvy]*$/;
+
+  function regexProblem(src) {
+    if (src.length > MAX_REGEX) return `longer than ${MAX_REGEX} characters`;
+    if (/\\[1-9]|\\k</.test(src)) return 'backreferences are not allowed';
+    const plain = src.replace(/\\./g, '_').replace(/\[(?:[^\]\\]|\\.)*\]/g, '_');
+    const repeat = /[*+]|\{\d+,\}/g;
+    if ((plain.match(repeat) || []).length > 2) return 'more than two unbounded repeats (* + {n,})';
+    const stack = [];
+    for (let i = 0; i < plain.length; i++) {
+      const c = plain[i];
+      if (c === '(') stack.push(i);
+      else if (c === ')') {
+        const start = stack.pop();
+        if (start === undefined) continue;
+        if (/^(?:[*+]|\{\d+,\})/.test(plain.slice(i + 1)) && /[*+|]|\{\d+,\}/.test(plain.slice(start + 1, i))) {
+          return 'a repeated group may not contain | or another repeat';
+        }
+      }
+    }
+    return '';
+  }
+
+  // '' when the term is fine, otherwise the reason it is not usable as a /regex/.
+  function regexTermProblem(term) {
+    const rm = term.match(/^\/(.+)\/([a-z]*)$/);
+    if (!rm || !REGEX_FLAGS.test(rm[2])) return '';
+    const bad = regexProblem(rm[1]);
+    if (bad) return bad;
+    try { new RegExp(rm[1], rm[2].replace(/[gy]/g, '')); } catch (e) { return `invalid pattern (${String(e.message).replace(/^Invalid regular expression: /, '')})`; }
+    return '';
+  }
+
+  // A term is a regex only when it looks like /pattern/flags with valid flags;
+  // anything else (for example "/r/politics") is a plain word. An unsafe or
+  // uncompilable regex is skipped rather than run.
   function termToRegex(term) {
     const rm = term.match(/^\/(.+)\/([a-z]*)$/);
-    if (rm) {
+    if (rm && REGEX_FLAGS.test(rm[2])) {
+      if (regexTermProblem(term)) return null;
       const flags = [...new Set(rm[2].replace(/[gy]/g, '').split(''))].join('');
       try { return new RegExp(rm[1], flags.includes('i') ? flags : `${flags}i`); } catch { return null; }
     }
@@ -254,7 +301,7 @@
   function evaluate(post, cf) {
     if (!post) return null;
     const f = cf.f;
-    const hay = `${post.text}\n${post.quoteText}\n${post.name}\n@${post.handle}`;
+    const hay = `${post.text.slice(0, MAX_HAY)}\n${String(post.quoteText || '').slice(0, 500)}\n${post.name}\n@${post.handle}`;
     if (cf.mute.length && anyMatch(cf.mute, hay)) return 'muted';
     if (cf.exclude.length && anyMatch(cf.exclude, hay)) return 'excluded word';
     if (cf.users.size && (cf.users.has(post.handle.toLowerCase()) || (post.reposter && cf.users.has(post.reposter.toLowerCase())))) return 'excluded user';
@@ -273,5 +320,5 @@
     return null;
   }
 
-  globalThis.XDeckCore = { SEL, num, textWithAlt, own, permalink, isPromoted, parseArticle, compileFilters, evaluate, splitTerms };
+  globalThis.XDeckCore = { regexProblem, regexTermProblem, SEL, num, textWithAlt, own, permalink, isPromoted, parseArticle, compileFilters, evaluate, splitTerms };
 })();

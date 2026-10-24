@@ -420,6 +420,14 @@ try {
   await page.locator('dialog[open] select').first().selectOption('light');
   check('settings: theme applies live', await page.evaluate(() => document.documentElement.dataset.theme) === 'light');
   await page.screenshot({ path: path.join(outDir, '8-settings.png') });
+  // Unsafe regex in the mute words is refused and the last valid list is kept.
+  const muteBox = page.locator('dialog[open] textarea').first();
+  await muteBox.fill('/(a+)+$/');
+  await muteBox.blur();
+  check('settings: unsafe mute-word regex is refused with a message', await page.locator('dialog[open] .form-error:not([hidden])', { hasText: 'cannot be used' }).count() === 1);
+  check('settings: the refused mute list is not saved', !((await sw.evaluate(() => chrome.storage.local.get('settings'))).settings || {}).muteWords);
+  await muteBox.fill('');
+  await muteBox.blur();
   await page.locator('dialog[open] select').first().selectOption('dark');
   await page.locator('dialog[open] .btn-primary', { hasText: 'Done' }).click();
   await page.keyboard.press('?');

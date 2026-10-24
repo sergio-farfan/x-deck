@@ -1,6 +1,7 @@
 // Dialogs: add/edit column (source, display, filters), settings, help.
 
 import { h, icon, openDialog, clear, toast } from './dom.js';
+import { termsError } from './terms.js';
 import {
   COLUMN_TYPES, TYPE_BY_ID, SEARCH_MODES, EXPLORE_TABS, SEARCH_PRESETS, DEFAULT_FILTERS,
   makeColumn, normalizeColumn, buildSearchQuery, cleanHandle, isValidHandle, safeXUrl,
@@ -309,6 +310,12 @@ export function openColumnEditor({ column, isNew, settings, onSave, onDelete }) 
             error.hidden = false;
             return false;
           }
+          const bad = termsError('Must include', include.value) || termsError('Exclude words', exclude.value);
+          if (bad) {
+            error.textContent = bad;
+            error.hidden = false;
+            return false;
+          }
           const filtersOut = {
             include: include.value.trim(),
             exclude: exclude.value.trim(),
@@ -362,7 +369,15 @@ export function openSettings({ settings, onChange, onExport, onImport, onReset }
   const width = bind(select(WIDTH_CHOICES, s.columnWidth), 'columnWidth', (el) => el.value);
   const refresh = bind(select(REFRESH_CHOICES, s.autoRefreshSec), 'autoRefreshSec', (el) => +el.value);
   const mute = area(s.muteWords, { rows: 3, placeholder: 'Hidden in every column. Comma or newline separated; /regex/ allowed.' });
-  mute.addEventListener('change', () => { s.muteWords = mute.value.trim(); commit(); });
+  const muteError = h('small', { class: 'form-error', role: 'alert', hidden: true });
+  mute.addEventListener('change', () => {
+    const bad = termsError('Mute words', mute.value);
+    muteError.textContent = bad;
+    muteError.hidden = !bad;
+    if (bad) return; // keep the last valid list
+    s.muteWords = mute.value.trim();
+    commit();
+  });
 
   const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
   file.addEventListener('change', async () => {
@@ -401,7 +416,8 @@ export function openSettings({ settings, onChange, onExport, onImport, onReset }
         bindCheck('Hide Grok buttons', s.clean, 'hideGrok')),
       bindCheck('Show filtered posts dimmed with the reason (to tune filters)', s, 'showFiltered'),
       bindCheck('Also apply Clean X, mute words and the collection button to normal x.com tabs', s, 'cleanRegularTabs')),
-    section('Global mute words', mute),
+    section('Global mute words', mute, muteError,
+      h('small', { class: 'hint' }, 'A /regex/ term must be short and simple: no group that repeats a repeat or an alternation, no backreferences, at most two repeats (* + {n,}). Unsafe patterns are refused.')),
     section('Data',
       h('div', { class: 'btn-row' },
         h('button', { type: 'button', class: 'btn', onclick: onExport }, icon('download', 16), ' Export workspaces'),

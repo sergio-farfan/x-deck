@@ -72,8 +72,40 @@ const results = await page.evaluate(() => {
   eq('CJK mute word matches inside text', ev({ ...p4, text: '\u6771\u4eac\u3067\u5730\u9707\u304c\u767a\u751f' }, { exclude: '\u5730\u9707' }), 'excluded word');
   const sticky = C.compileFilters({ include: '/hel+o/gy' }, '');
   eq('regex g/y flags do not make matching alternate', [C.evaluate(p1, sticky), C.evaluate(p1, sticky), C.evaluate(p1, sticky)], [null, null, null]);
+  // ---- regex safety ----
+  const timed = (fn) => { const t0 = performance.now(); const r = fn(); return [r, performance.now() - t0]; };
+  const evil = ['/(a+)+$/', '/^(\\w+\\s?)+$/', '/(.*)*x/', '/.*.*.*.*x/', '/(a|aa)+$/', '/(a*)\\1/'];
+  const victim = { text: 'a'.repeat(40) + '!', quoteText: '', name: '', handle: 'h', metrics: {} };
+  for (const term of evil) {
+    const [r, ms] = timed(() => C.evaluate(victim, C.compileFilters({ exclude: term }, '')));
+    eq(`unsafe regex ${term} is skipped and returns fast`, [r, ms < 200], [null, true]);
+  }
+  const [rLong, msLong] = timed(() => C.evaluate({ ...victim, text: 'a'.repeat(100000) }, C.compileFilters({ exclude: '/a+b/' }, '')));
+  eq('huge post text is capped before matching', msLong < 200, true);
+  eq('normal regexes still work', [
+    C.evaluate({ ...victim, text: 'Breaking: big news' }, C.compileFilters({ include: '/break(ing)?\\b/' }, '')),
+    C.evaluate({ ...victim, text: 'free 100x giveaway' }, C.compileFilters({ exclude: '/\\d+x\\s+giveaway/' }, '')),
+    C.evaluate({ ...victim, text: 'sale at 50% off' }, C.compileFilters({ exclude: '/(sale|discount)/' }, '')),
+  ], [null, 'excluded word', 'excluded word']);
+  eq('a /path/-looking term is a plain word, not a dropped regex', C.evaluate({ ...victim, text: 'see /r/politics today' }, C.compileFilters({ exclude: '/r/politics' }, '')), 'excluded word');
+  eq('an uncompilable regex is skipped, not run', C.evaluate({ ...victim, text: 'x ( y' }, C.compileFilters({ exclude: '/(unclosed/' }, '')), null);
+  window.__guardTable = ['/(a+)+$/', '/a{1,3}/', '/(foo|bar)+/', '/(foo|bar)?/', '/\\bword\\b/', '/.*.*x/', '/.*.*.*x/', '/[a+]+[b*]+/', '/(?=.*a)(?=.*b)/', '/(ab)\\1/', '/x'.padEnd(220, 'x') + '/', '/r/politics', '/(unclosed/', 'plain', '/a/gi', '/a/zz']
+    .map((term) => [term, C.regexTermProblem(term)]);
   return t;
 });
+
+const { regexTermProblem, splitTerms: splitTermsEditor } = await import('../src/terms.js');
+const table = await page.evaluate(() => window.__guardTable);
+for (const [term, pageResult] of table) {
+  results.push({ name: `editor and page guards agree on ${term.slice(0, 30)}`, ok: !!regexTermProblem(term) === !!pageResult, got: regexTermProblem(term), want: pageResult });
+}
+const splitCases = ['a, b', '/a{1,3}/, c', 'x,\n/y,z/i', '', '  ,  ', '/r/politics, spoiler'];
+const pageSplit = await page.evaluate((cases) => cases.map((c) => globalThis.XDeckCore.splitTerms(c)), splitCases);
+splitCases.forEach((c, i) => results.push({ name: `editor and page splitTerms agree on ${JSON.stringify(c)}`, ok: JSON.stringify(splitTermsEditor(c)) === JSON.stringify(pageSplit[i]), got: splitTermsEditor(c), want: pageSplit[i] }));
+const expectBlocked = ['/(a+)+$/', '/.*.*.*x/', '/(foo|bar)+/', '/(ab)\\1/'];
+const expectFine = ['/a{1,3}/', '/(foo|bar)?/', '/.*.*x/', '/\\bword\\b/', '/r/politics', 'plain'];
+for (const t of expectBlocked) results.push({ name: `guard blocks ${t}`, ok: !!regexTermProblem(t), got: regexTermProblem(t), want: 'a reason' });
+for (const t of expectFine) results.push({ name: `guard allows ${t}`, ok: regexTermProblem(t) === '', got: regexTermProblem(t), want: '' });
 
 await browser.close();
 let failed = 0;
