@@ -1,6 +1,6 @@
 {
   "name": "xdeck",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "XDeck Chrome extension: multi-column deck for X. No build step; load the folder unpacked.",
   "type": "module",
