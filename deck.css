@@ -665,3 +665,6 @@ kbd {
 body.superseded .rail,
 body.superseded .topbar,
 body.superseded .stage { pointer-events: none; opacity: .45; }
+
+/* Focus stop after each column's frame; invisible, only there to route Tab in visual order. */
+.tab-sentinel { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }

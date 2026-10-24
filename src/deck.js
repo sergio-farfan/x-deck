@@ -1,7 +1,7 @@
 // XDeck deck page: workspaces, live x.com columns, layouts, reading pane,
 // composer, keyboard shortcuts, unread counters and keyword-alert relay.
 
-import { loadState, onSaveFailure, planImport, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
+import { loadState, onSaveFailure, saveColumnConfigs, planImport, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
 import { buildUrl, describe, makeColumn, normalizeColumn, columnFromUrl, safeXUrl, uid, WIDTHS } from './columns.js';
 import { h, icon, iconButton, append, clear, toast, popMenu, closeMenu, focusQuietly, confirmDialog, promptDialog, copyText, downloadText } from './dom.js';
 import { openColumnEditor, openSettings, openHelp, openRefreshDialog } from './dialogs.js';
@@ -32,6 +32,8 @@ const app = {
   qsearch: null,
   collections: null,
   colState: new Map(),   // columnId -> { mark, unread } kept across workspace switches (views are destroyed)
+  tokens: new Map(),     // columnId -> secret shared with that column's frame through extension storage
+  lastColcfg: '',
   booted: false,
   invalidated: false,   // the extension was updated or reloaded under this deck: saving is impossible
   refreshPaused: false,  // pauses every column's auto-refresh timer (not saved)
@@ -57,6 +59,7 @@ function findColumn(id) {
 function save() {
   if (app.superseded || app.invalidated || checkAlive()) return;
   saveWorkspaces(app.workspaces, app.activeId);
+  syncColumnConfigs();
 }
 
 function persistSettings() {
@@ -98,6 +101,41 @@ function setFrameSrc(iframe, url) {
     if (iframe.getAttribute('src') && iframe.contentWindow) { iframe.contentWindow.location.replace(url); return; }
   } catch { /* not ready yet */ }
   iframe.src = url;
+}
+
+// ---------- column settings for frames ----------
+// Frames get their settings from extension storage (key colcfg), not from page
+// messages: scripts running on x.com inside a frame can read every message the deck
+// posts to it, but not chrome.storage. Each entry carries a random token that the
+// frame must echo in every message it sends back, so a script in the frame cannot
+// forge messages to the deck either.
+
+function tokenFor(id) {
+  let t = app.tokens.get(id);
+  if (!t) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    t = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    app.tokens.set(id, t);
+  }
+  return t;
+}
+
+function syncColumnConfigs() {
+  if (app.superseded || app.invalidated) return;
+  const colcfg = { __reader: { token: tokenFor('__reader') }, __composer: { token: tokenFor('__composer') } };
+  for (const ws of app.workspaces) {
+    for (const col of ws.columns) {
+      colcfg[col.id] = {
+        token: tokenFor(col.id),
+        id: col.id, type: col.type, params: col.params, url: buildUrl(col), label: describe(col).title,
+        filters: col.filters, refreshMode: col.refreshMode,
+      };
+    }
+  }
+  const json = JSON.stringify(colcfg);
+  if (json === app.lastColcfg) return;
+  app.lastColcfg = json;
+  saveColumnConfigs(colcfg);
 }
 
 // ---------- loading x.com pages into frames ----------
@@ -221,6 +259,42 @@ function setDragging(on) {
   document.body.classList.toggle('dragging', on);
 }
 
+// ---------- keyboard order across columns (visual order, not DOM order) ----------
+
+function headFocusables(head) {
+  return [...head.querySelectorAll('button, a[href]')].filter((el) => !el.hidden && !el.disabled && el.offsetParent !== null);
+}
+
+function visualViews() {
+  const ws = activeWs();
+  return ws ? ws.columns.map((c) => app.views.get(c.id)).filter((v) => v && v.el.offsetParent !== null) : [];
+}
+
+function focusFirstIn(root) {
+  const el = root && [...root.querySelectorAll('button, a[href], input, select, textarea, [tabindex="0"]')].find((x) => !x.hidden && !x.disabled && x.offsetParent !== null);
+  if (el) { el.focus(); return true; }
+  return false;
+}
+
+// Tab left the frame of `view`: continue with the next column on screen, then the reading pane, then the rail.
+function tabForwardFrom(view) {
+  const list = visualViews();
+  const next = list[list.indexOf(view) + 1];
+  if (next) { const first = headFocusables(next.head)[0]; if (first) { first.focus(); return; } }
+  if (!$reader.hidden && focusFirstIn($reader)) return;
+  focusFirstIn($rail);
+}
+
+// Shift+Tab from the first header button: into the previous column's frame, or back to the top bar.
+function tabBackwardFrom(view) {
+  const list = visualViews();
+  const prev = list[list.indexOf(view) - 1];
+  if (prev && prev.loaded) { prev.iframe.focus(); return; }
+  if (prev) { const b = headFocusables(prev.head); if (b.length) { b[b.length - 1].focus(); return; } }
+  const bar = [...$topbar.querySelectorAll('button, input, select')].filter((x) => !x.hidden && x.offsetParent !== null);
+  if (bar.length) bar[bar.length - 1].focus();
+}
+
 // ---------- column view ----------
 
 class ColumnView {
@@ -238,7 +312,8 @@ class ColumnView {
     this.holdReason = '';
     this.timerText = '';
     this.ids = new Set(); // post IDs this column has reported, for de-duplication
-    this.ready = false;   // the current document's script has said hello (it can take messages)
+    this.ready = false;   // the current document's script is set up (it has read its settings and said ready)
+    this.token = tokenFor(col.id);
     this.pendingNav = ''; // navigation requested before the frame was ready
     this.build();
     this.loader = new FrameLoader(this.iframe, {
@@ -278,7 +353,17 @@ class ColumnView {
     this.placeholder = h('div', { class: 'col-placeholder' }, h('div', { class: 'spinner' }), h('span', null, 'Loading'));
     this.iframe = h('iframe', { title: d.title, allow: IFRAME_ALLOW });
     this.body = h('div', { class: 'col-body' }, this.placeholder, this.iframe);
-    this.el = h('section', { class: 'col', dataset: { id: this.col.id } }, this.head, this.body);
+    // Columns are reordered with CSS order (moving an iframe in the DOM would reload it), so the
+    // keyboard order is routed by hand: Tab out of this column's frame lands on the next column
+    // in VISUAL order, Shift+Tab from the first header button goes into the previous one.
+    this.endSentinel = h('div', { class: 'tab-sentinel', tabindex: '0', 'aria-hidden': 'true' });
+    this.endSentinel.addEventListener('focus', () => tabForwardFrom(this));
+    this.head.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab' || !e.shiftKey) return;
+      const first = headFocusables(this.head)[0];
+      if (first && document.activeElement === first) { e.preventDefault(); tabBackwardFrom(this); }
+    });
+    this.el = h('section', { class: 'col', dataset: { id: this.col.id } }, this.head, this.body, this.endSentinel);
     this.applyWidth();
     wireDrag(this);
   }
@@ -382,7 +467,8 @@ class ColumnView {
   }
 
   sendConfig() {
-    this.post({ type: 'config', role: 'column', mark: this.mark, column: { ...this.col, url: this.url, label: describe(this.col).title } });
+    // Only an id and the newest-post mark; the frame reads everything else from storage.
+    this.post({ type: 'config', role: 'column', id: this.col.id, mark: this.mark });
   }
 
   update(col) {
@@ -467,11 +553,13 @@ class ColumnView {
 
   onMessage(m) {
     switch (m.type) {
-      case 'hello':
+      case 'hello': // unauthenticated: only answer with the id
+        this.sendConfig();
+        break;
+      case 'ready':
         this.href = String(m.href || '');
         this.backBtn.hidden = samePage(this.href, this.url) || isBootUrl(this.href);
-        this.sendConfig();
-        if (!isBootUrl(this.href)) this.frameReady();
+        if (!isBootUrl(this.href)) { this.loader.confirmHop(this.href); this.frameReady(); }
         break;
       case 'nav':
         this.href = String(m.href || '');
@@ -623,6 +711,7 @@ const reader = {
   pending: null,    // URL requested while the first page was still loading
   requestedAt: 0,   // when the current page load was started
   href: '',
+  get token() { return tokenFor('__reader'); },
   build() {
     this.iframe = h('iframe', { title: 'Reading pane', allow: IFRAME_ALLOW });
     this.loader = new FrameLoader(this.iframe, {
@@ -676,12 +765,12 @@ const reader = {
     }
   },
   onMessage(m) {
-    if (m.type === 'hello') {
-      postTo(this.iframe, { type: 'config', role: 'detail', column: null });
+    if (m.type === 'hello') postTo(this.iframe, { type: 'config', role: 'detail', id: '__reader' });
+    if (m.type === 'ready') {
       this.ready = true;
       if (this.pending) { postTo(this.iframe, { type: 'navigate', url: this.pending }); this.pending = null; }
     }
-    if (m.type === 'hello' || m.type === 'nav') {
+    if (m.type === 'ready' || m.type === 'nav') {
       const safe = safeXUrl(m.href);
       if (safe) { this.href = safe; this.openTab.href = safe; }
       if (m.type === 'nav') this.loader.confirmHop(String(m.href || ''));
@@ -715,6 +804,7 @@ function startResize(e) {
 const composer = {
   iframe: null,
   sawCompose: false,
+  get token() { return tokenFor('__composer'); },
   build() {
     this.iframe = h('iframe', { title: 'New post', allow: IFRAME_ALLOW });
     this.loader = new FrameLoader(this.iframe, {
@@ -750,9 +840,9 @@ const composer = {
     if (this.iframe) setFrameSrc(this.iframe, 'about:blank');
   },
   onMessage(m) {
-    if (m.type === 'hello') postTo(this.iframe, { type: 'config', role: 'compose', column: null });
+    if (m.type === 'hello') postTo(this.iframe, { type: 'config', role: 'compose', id: '__composer' });
     if (m.type === 'nav') this.loader.confirmHop(String(m.href || ''));
-    if (m.type === 'hello' || m.type === 'nav') {
+    if (m.type === 'ready' || m.type === 'nav') {
       const href = String(m.href || '');
       if (href.includes('/compose/')) this.sawCompose = true;
       else if (this.sawCompose && !$composer.hidden) setTimeout(() => this.close(true), 300); // posted or discarded inside X
@@ -776,7 +866,11 @@ window.addEventListener('message', (e) => {
   const m = e.data;
   if (!m || typeof m !== 'object' || m.ns !== 'xdeck' || typeof m.type !== 'string') return;
   const target = frameFor(e.source);
-  if (target) target.onMessage(m);
+  if (!target) return;
+  // Everything except the first hello must carry the token the frame read from storage;
+  // a script on x.com inside the frame cannot know it.
+  if (m.type !== 'hello' && m.token !== target.token) return;
+  target.onMessage(m);
 });
 
 // ---------- workspaces & layouts ----------
@@ -807,6 +901,7 @@ function ensureWsEl(ws) {
 
 function renderWorkspace(ws) {
   if (app.superseded) return;
+  syncColumnConfigs(); // frames read their settings from storage; write before any frame can ask
   const rec = ensureWsEl(ws);
   const ids = new Set(ws.columns.map((c) => c.id));
   for (const [id, v] of app.views) {
@@ -827,6 +922,7 @@ function renderWorkspace(ws) {
     v.el.style.order = String(i);
     v.el.classList.toggle('active', ws.layout === 'tabs' && ws.activeColumnId === col.id);
     v.el.classList.toggle('focused', ws.activeColumnId === col.id);
+    v.el.setAttribute('aria-label', `${describe(col).title}, column ${i + 1} of ${ws.columns.length}`);
     if (!app.settings.lazyLoad || col.notify) v.load();
   });
   rec.cols.className = `ws-cols l-${ws.layout}`;
@@ -1610,6 +1706,7 @@ async function boot() {
   }
 
   renderTopbar();
+  syncColumnConfigs();
   showWorkspace(app.activeId);
   app.booted = true;
   app.lastTick = Date.now();

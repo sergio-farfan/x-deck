@@ -35,7 +35,10 @@
 
   const state = {
     role: inDeck ? 'column' : 'tab',  // column | detail | compose | tab
-    column: null,                     // column config sent by the deck
+    columnId: '',                     // which entry of storage key colcfg is ours (set by the deck's config message)
+    token: '',                        // secret from that entry; echoed in every message to the deck
+    readyToken: '',                   // token we have already announced with 'ready'
+    column: null,                     // column settings read from storage
     settings: null,
     cf: null,                         // compiled filters
     collected: new Set(),
@@ -53,6 +56,7 @@
     atTop: true,
     href: location.href,
     stack: [location.href],
+    navLen: history.length, // joint history length when this page was reached (see goBack)
     homeTabDone: false,
     rootClasses: new Set(inDeck ? ['xdeck-frame'] : []),
     observer: null,
@@ -71,7 +75,45 @@
 
   function send(msg) {
     if (!inDeck) return;
-    try { window.parent.postMessage({ ns: 'xdeck', ...msg }, location.origin); } catch { /* deck gone */ }
+    try { window.parent.postMessage({ ns: 'xdeck', token: state.token || undefined, ...msg }, location.origin); } catch { /* deck gone */ }
+  }
+
+  // Column settings come from extension storage, which scripts on x.com cannot read;
+  // the deck's message only says which entry is ours. Re-applied whenever the deck
+  // rewrites the entry (filters edited, column moved to another page).
+  function loadColumnConfig() {
+    if (!state.columnId || !alive()) return;
+    chrome.storage.local.get('colcfg').then(({ colcfg }) => {
+      const cfg = colcfg && colcfg[state.columnId];
+      if (!cfg) return; // not written yet: storage.onChanged brings it
+      applyColumnConfig(cfg);
+    }).catch(() => {});
+  }
+
+  function applyColumnConfig(cfg) {
+    const prev = state.column;
+    state.token = String(cfg.token || '');
+    state.column = state.role === 'column' ? {
+      id: cfg.id, type: cfg.type, params: cfg.params || {}, url: cfg.url, label: cfg.label,
+      filters: cfg.filters || {}, refreshMode: cfg.refreshMode,
+    } : null;
+    applySettings();
+    // Saving the column (title, width, filters) must not reset the page state or
+    // re-force Following/Latest; only a different page or timeline choice does.
+    const same = !!(prev && state.column && prev.url === state.column.url
+      && (prev.params || {}).homeTab === (state.column.params || {}).homeTab
+      && (prev.params || {}).mode === (state.column.params || {}).mode);
+    if (!same) {
+      if (prev) resetPageState();
+      state.markApplied = false;
+      state.homeTabDone = false;
+      state.searchTabDone = false;
+    }
+    if (state.token && state.readyToken !== state.token) {
+      state.readyToken = state.token;
+      send({ type: 'ready', href: location.href });
+    }
+    scheduleScan();
   }
 
   function alive() {
@@ -84,26 +126,13 @@
     if (!m || m.ns !== 'xdeck') return;
     switch (m.type) {
       case 'config': {
-        const prev = state.column;
         state.role = m.role || 'column';
-        state.column = m.column || null;
-        applySettings();
-        // Saving the column (title, width, filters) must not reset the page state or
-        // re-force Following/Latest; only a different page or timeline choice does.
-        const same = !!(prev && state.column && prev.url === state.column.url
-          && (prev.params || {}).homeTab === (state.column.params || {}).homeTab
-          && (prev.params || {}).mode === (state.column.params || {}).mode);
+        state.columnId = String(m.id || '');
         // The deck remembers the newest post this column has shown, so a
         // reloaded column (refresh mode "reload") still detects new posts.
         // Applied in scan() once the column's own page is showing.
         state.baseMark = +m.mark || 0;
-        if (!same) {
-          if (prev) resetPageState();
-          state.markApplied = false;
-          state.homeTabDone = false;
-          state.searchTabDone = false;
-        }
-        scheduleScan();
+        loadColumnConfig();
         break;
       }
       case 'refresh': refreshNow(); break;
@@ -141,6 +170,10 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if (changes.colcfg && state.columnId) {
+      const cfg = changes.colcfg.newValue && changes.colcfg.newValue[state.columnId];
+      if (cfg) applyColumnConfig(cfg);
+    }
     if (changes.settings) {
       state.settings = changes.settings.newValue || {};
       applySettings();
@@ -193,13 +226,17 @@
     if (on && !state.observer) {
       state.observer = new MutationObserver(scheduleScan);
       state.observer.observe(root, { childList: true, subtree: true });
+      // X navigates with pushState, which fires no event; the Navigation API reports it at once
+      // and the timer covers browsers and cases without it.
       state.navTimer = setInterval(checkNav, 400);
+      if (window.navigation) navigation.addEventListener('currententrychange', checkNav);
       scheduleScan();
     } else if (!on && state.observer) {
       state.observer.disconnect();
       state.observer = null;
       clearInterval(state.navTimer);
       state.navTimer = null;
+      if (window.navigation) navigation.removeEventListener('currententrychange', checkNav);
       for (const n of document.querySelectorAll('[data-xd-hide]')) n.removeAttribute('data-xd-hide');
       for (const n of document.querySelectorAll('[data-xd-kind]')) n.removeAttribute('data-xd-kind');
       for (const n of document.querySelectorAll('.xd-collect')) n.remove();
@@ -552,18 +589,40 @@
     if (st.length > 1 && st[st.length - 2] === href) st.pop(); else st.push(href);
     if (st.length > 50) st.splice(0, st.length - 50);
     state.href = href;
+    state.navLen = history.length;
     state.homeTabDone = false;
     state.searchTabDone = false;
     send({ type: 'nav', href, depth: st.length - 1 });
     scheduleScan();
   }
 
-  // Back within this column only. Iframes share the tab's joint session
-  // history, so history.back() could move another column or the reading pane.
+  // Back within this column only. A real history traversal is best: X then restores the
+  // previous view exactly, as its own close button does (a photo or video viewer closes over
+  // the timeline at the same scroll position; navigating to the URL again would redraw the page
+  // from the top). But iframes share the tab's joint session history, so a traversal is only
+  // safe while no other frame has navigated since this page was pushed; otherwise it would
+  // move that frame instead. Then, or if the traversal does not land, navigate in-app.
   function goBack() {
     const st = state.stack;
-    if (st.length > 1) spaNavigate(st[st.length - 2]);
-    else send({ type: 'resetRequest' });
+    if (st.length < 2) { send({ type: 'resetRequest' }); return; }
+    const target = st[st.length - 2];
+    const prev = ownPreviousEntry(target);
+    if (!prev) { spaNavigate(target); return; }
+    const landed = () => location.href === target;
+    const settle = setTimeout(() => { if (!landed()) spaNavigate(target); }, 1500);
+    try {
+      navigation.traverseTo(prev.key).finished.catch(() => { clearTimeout(settle); if (!landed()) spaNavigate(target); });
+    } catch { clearTimeout(settle); spaNavigate(target); }
+  }
+
+  // This frame's own previous history entry (Navigation API) when going back to it is safe:
+  // history.length, shared by every frame in the tab, has not changed since the current page
+  // was pushed, so no other frame has added an entry after it.
+  function ownPreviousEntry(target) {
+    const nav = window.navigation;
+    if (!nav || !nav.currentEntry || history.length !== state.navLen) return null;
+    const prev = nav.entries()[nav.currentEntry.index - 1];
+    return prev && prev.url === target ? prev : null;
   }
 
   // In-app navigation without reloading X. Prefer X's own link for the path

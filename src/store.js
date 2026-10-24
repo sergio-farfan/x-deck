@@ -1,5 +1,8 @@
 // Persistent state in chrome.storage.local.
-// Keys: settings, workspaces, activeWorkspaceId, collections, inbox:<id>.
+// Keys: settings, workspaces, activeWorkspaceId, collections, inbox:<id>, colcfg.
+// colcfg = { <columnId>: { token, type, params, url, label, filters, refreshMode } } written by the
+// deck for its frames: a frame's content script reads its own entry from here, so a column's
+// settings never travel through page messages that scripts on x.com could read.
 // content/frame.js reads `settings` (clean, muteWords, showFiltered,
 // readingPane, pauseOnHover, cleanRegularTabs) and reads/writes `collections`;
 // keep the key names in sync with it.
@@ -259,6 +262,10 @@ export function flushWorkspaces() {
 
 export function saveSettings(settings) {
   return guardedSet({ settings });
+}
+
+export function saveColumnConfigs(colcfg) {
+  return guardedSet({ colcfg });
 }
 
 export async function getCollections() {

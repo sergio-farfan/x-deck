@@ -43,7 +43,7 @@
                 </div>
                 <div><div>Replying to <a href="/carol">@carol</a></div></div>
                 <div data-testid="tweetText" lang="en"><span>Hello world launch day </span><img alt="&#x1F680;"><span> see </span><a href="https://t.co/abc">example.com/x</a></div>
-                <div data-testid="tweetPhoto"><img alt=""></div>
+                <a data-router href="/bob/status/1001/photo/1"><div data-testid="tweetPhoto"><img alt="">photo</div></a>
                 <div role="link" tabindex="0">
                   <div data-testid="User-Name"><span>Quoted Q</span><span>@qq</span><time datetime="2026-10-20T08:00:00.000Z">1d</time></div>
                   <div data-testid="tweetText" lang="en">quoted text here</div>
@@ -132,6 +132,7 @@
       a.innerHTML = `<div data-testid="User-Name"><a href="/v${i}"><span>Virtual ${i}</span></a><a href="/v${i}"><span>@v${i}</span></a>`
         + `<a href="/v${i}/status/${7000 + i}"><time datetime="2026-10-${String(1 + (i % 28)).padStart(2, '0')}T10:00:00.000Z">1h</time></a></div>`
         + `<div data-testid="tweetText" lang="en">Virtual post number ${i}</div>`
+        + `<a data-router href="/v${i}/status/${7000 + i}/photo/1"><div data-testid="tweetPhoto">photo ${i}</div></a>`
         + `<div role="group" aria-label="1 reply, 2 reposts, ${i} likes"><button data-testid="like">${i}</button></div>`;
       d.appendChild(a);
       return d;
@@ -149,12 +150,31 @@
     window.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
     update();
   }
-  // Tiny stand-in for X's router: its own links and popstate re-render the page.
-  const render = () => { document.getElementById('route').textContent = location.pathname; };
+  // Tiny stand-in for X's router: its own links and popstate re-render the page. Like X, a
+  // /status/<id>/photo/<n> URL shows the media viewer as a layer over the page, which stays
+  // mounted underneath, and the viewer's close button is history.back().
+  const render = () => {
+    document.getElementById('route').textContent = location.pathname;
+    let layers = document.getElementById('layers');
+    if (/\/status\/\d+\/(photo|video)\/\d+$/.test(location.pathname)) {
+      if (!layers) {
+        layers = document.createElement('div');
+        layers.id = 'layers';
+        layers.innerHTML = '<div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#000;z-index:10;color:#fff">'
+          + '<button data-testid="app-bar-close" aria-label="Close">x</button><p>media viewer</p></div>';
+        layers.querySelector('button').addEventListener('click', () => history.back());
+        document.body.appendChild(layers);
+      }
+    } else if (layers) layers.remove();
+  };
   render();
-  for (const a of document.querySelectorAll('a[data-router]')) {
-    a.addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', a.getAttribute('href')); render(); });
-  }
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a[data-router]');
+    if (!a) return;
+    e.preventDefault();
+    history.pushState({}, '', a.getAttribute('href'));
+    render();
+  });
   window.addEventListener('popstate', render);
   // On /search, show X's search tabs. Like X after an in-app navigation, open on Top whatever f= says.
   if (location.pathname === '/search') {

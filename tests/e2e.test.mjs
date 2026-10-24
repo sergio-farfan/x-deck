@@ -940,6 +940,139 @@ try {
   await vp.screenshot({ path: path.join(outDir, '15-virtual-scroll.png') });
   await vp.close();
 
+  // ------------------------------------------------------------------
+  // Phase 10: frames get settings from storage, forged frame messages are ignored, tab order
+  // follows the visual column order
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    settings: { lazyLoad: false },
+    workspaces: [{ id: 'ws', name: 'Sec', layout: 'columns', gridRows: 0, columns: [
+      col('bookmarks', {}, { title: 'A', refreshSec: 0, filters: { excludeUsers: '@secret_person', exclude: 'confidential topic' } }),
+      col('bookmarks', {}, { title: 'B', refreshSec: 0 }),
+      col('bookmarks', {}, { title: 'C', refreshSec: 0 }),
+    ] }],
+    activeWorkspaceId: 'ws',
+    migrations: ['grid-auto-v1'],
+  });
+  const sp = await context.newPage();
+  watchErrors(sp);
+  await sp.goto(deckUrl, { waitUntil: 'commit' });
+  await sp.waitForSelector('.col');
+  const colOf = (title) => sp.locator('.col', { has: sp.locator('.col-title', { hasText: new RegExp(`^${title}$`) }) });
+  const frameOf = async (title) => { const hnd = await colOf(title).locator('iframe').elementHandle(); return hnd && hnd.contentFrame(); };
+  const fa2x = await waitFor(async () => { const f = await frameOf('A'); return f && (await f.evaluate(() => document.documentElement.classList.contains('xdeck-frame'))) ? f : null; }, 20000);
+  // Listen in the frame's MAIN world, as any script on x.com could.
+  await fa2x.evaluate(() => { window.__seen = []; window.addEventListener('message', (e) => { window.__seen.push(JSON.stringify(e.data)); }); });
+  await colOf('A').locator('.icon-btn[aria-label="Edit column and filters"]').click();
+  await sp.waitForSelector('dialog[open]');
+  if (!(await sp.locator('dialog[open] details.filters').evaluate((d) => d.open))) await sp.locator('dialog[open] details.filters summary').click();
+  await sp.locator('dialog[open] textarea').nth(1).fill('confidential topic, spoiler');
+  await sp.locator('dialog[open] .btn-primary').click();
+  const applied = await waitFor(() => fa2x.evaluate(() => document.querySelectorAll('[data-xd-hide="excluded word"]').length > 0), 8000);
+  const seen = await fa2x.evaluate(() => window.__seen);
+  const leaked = seen.filter((m) => /secret_person|confidential|spoiler|excludeUsers|"filters"/.test(m));
+  check('privacy: the frame applies the edited filter', !!applied);
+  check('privacy: messages the deck posts to a frame carry no filter settings', seen.length > 0 && leaked.length === 0, leaked[0] || `${seen.length} messages, e.g. ${seen[0]}`);
+  // Forged messages from a script inside the frame: no effect on the deck.
+  const before2 = (await sw.evaluate(() => chrome.storage.local.get('settings'))).settings || {};
+  await fa2x.evaluate(() => {
+    parent.postMessage({ ns: 'xdeck', type: 'key', code: 'KeyP' }, '*');
+    parent.postMessage({ ns: 'xdeck', type: 'openDetail', url: 'https://x.com/bob/status/1001' }, '*');
+    parent.postMessage({ ns: 'xdeck', type: 'posts', ids: [], fresh: [{ id: '424242', handle: 'eve', name: 'Eve', text: 'forged alert' }] }, '*');
+  });
+  await sleep(1200);
+  const after2 = (await sw.evaluate(() => chrome.storage.local.get('settings'))).settings || {};
+  check('security: a forged message cannot flip a setting', !!before2.readingPane === !!after2.readingPane);
+  check('security: a forged message cannot open the reading pane or raise an alert', await sp.locator('#reader').isHidden() && (await sp.locator('.toast', { hasText: 'forged' }).count()) === 0 && (await colOf('A').locator('.badge:not([hidden])').count()) === 0);
+  // The frame itself is still trusted (it read the token from storage): it can report posts.
+  check('security: the real frame is still trusted', !!(await waitFor(() => fa2x.evaluate(() => document.querySelectorAll('.xd-collect').length > 0), 5000)));
+  // Tab order: move A to the right so the DOM order (A, B, C) and the visual order (B, A, C) differ.
+  await colOf('A').locator('.icon-btn[aria-label="More"]').click();
+  await sp.locator('.menu-item', { hasText: 'Move right' }).click();
+  await sleep(400);
+  const labels = await sp.evaluate(() => [...document.querySelectorAll('.col')].sort((a, b) => +a.style.order - +b.style.order).map((c) => c.getAttribute('aria-label')));
+  check('tab order: columns announce their visual position', JSON.stringify(labels) === JSON.stringify(['B, column 1 of 3', 'A, column 2 of 3', 'C, column 3 of 3']), JSON.stringify(labels));
+  await colOf('B').locator('.tab-sentinel').focus();
+  const afterB = await sp.evaluate(() => document.activeElement && document.activeElement.closest('.col') && document.activeElement.closest('.col').querySelector('.col-title').textContent);
+  check('tab order: Tab out of column B\'s frame reaches A (visually next), not C (next in the DOM)', afterB === 'A', String(afterB));
+  await colOf('A').locator('.col-head button:not([hidden])').first().focus();
+  await sp.keyboard.press('Shift+Tab');
+  const afterShift = await sp.evaluate(() => { const ae = document.activeElement; return ae && ae.tagName === 'IFRAME' ? ae.closest('.col').querySelector('.col-title').textContent : (ae && ae.tagName); });
+  check('tab order: Shift+Tab from A\'s header enters B\'s frame (visually previous)', afterShift === 'B', String(afterShift));
+  await sp.close();
+
+  // ------------------------------------------------------------------
+  // Phase 11: back from a picture or video viewer returns to the previous view in place
+  // (regression: the header's back arrow navigated to the column's URL again, so the column
+  // redrew from the top instead of showing the post the picture came from)
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    settings: { lazyLoad: false, readingPane: true },
+    workspaces: [{ id: 'wb', name: 'Back', layout: 'columns', gridRows: 0, columns: [
+      col('list', { list: '777' }, { title: 'V', refreshSec: 0 }),
+      col('bookmarks', {}, { title: 'K', refreshSec: 0 }),
+    ] }],
+    activeWorkspaceId: 'wb',
+    migrations: ['grid-auto-v1'],
+  });
+  const bp = await context.newPage();
+  watchErrors(bp);
+  await bp.goto(deckUrl, { waitUntil: 'commit' });
+  await bp.waitForSelector('.col');
+  const bcol = (title) => bp.locator('.col', { has: bp.locator('.col-title', { hasText: new RegExp(`^${title}$`) }) });
+  const bframe = async (title) => { const hnd = await bcol(title).locator('iframe').elementHandle(); return hnd && hnd.contentFrame(); };
+  const fv = await waitFor(async () => { const f = await bframe('V'); return f && (await f.evaluate(() => location.pathname === '/i/lists/777' && document.querySelectorAll('[data-testid="cellInnerDiv"]').length > 0)) ? f : null; }, 20000);
+  const fk = await waitFor(async () => { const f = await bframe('K'); return f && (await f.evaluate(() => location.pathname === '/i/bookmarks' && document.documentElement.classList.contains('xdeck-frame'))) ? f : null; }, 20000);
+  const viewerOpen = (f) => f.evaluate(() => !!document.querySelector('#layers [aria-modal="true"]'));
+  const pathOf = (f) => f.evaluate(() => location.pathname);
+  const vbox = await bcol('V').locator('iframe').boundingBox();
+  await bp.mouse.move(vbox.x + vbox.width / 2, vbox.y + vbox.height / 2);
+  for (let i = 0; i < 8; i++) { await bp.mouse.wheel(0, 500); await sleep(120); }
+  // Open a picture: like X, the viewer is a layer over the timeline at /status/<id>/photo/1.
+  const photo = fv.locator('a[data-router] [data-testid="tweetPhoto"]').first();
+  await photo.scrollIntoViewIfNeeded(); // the click below must not scroll; the baseline is taken after this
+  await sleep(600);
+  const scrolled = await fv.evaluate(() => window.scrollY);
+  await photo.click();
+  await waitFor(() => viewerOpen(fv), 4000);
+  const photoPath = await pathOf(fv);
+  check('media viewer: clicking a picture opens the viewer over the column', /\/photo\/1$/.test(photoPath) && await viewerOpen(fv) && scrolled > 2000, `${photoPath}, scrolled ${scrolled}`);
+  check('media viewer: the column header shows the back arrow', !!(await waitFor(() => bcol('V').locator('.col-back').isVisible(), 3000)));
+  await bcol('V').locator('.col-back').click();
+  await waitFor(async () => !(await viewerOpen(fv)), 5000);
+  const afterBack = await fv.evaluate(() => ({ path: location.pathname, scrollY: window.scrollY, viewer: !!document.querySelector('#layers') }));
+  check('media viewer: back closes the viewer and shows the timeline at the same place', afterBack.path === '/i/lists/777' && !afterBack.viewer && Math.abs(afterBack.scrollY - scrolled) < 5, JSON.stringify({ before: scrolled, ...afterBack }));
+  check('media viewer: the other column did not move', (await pathOf(fk)) === '/i/bookmarks');
+  check('media viewer: the back arrow hides again', !!(await waitFor(() => bcol('V').locator('.col-back').isHidden(), 3000)));
+  // Another column navigates while the picture is open: a history traversal would move that
+  // column instead, so back must take the in-app route and leave it alone.
+  await fv.locator('a[data-router] [data-testid="tweetPhoto"]').first().click();
+  await waitFor(() => viewerOpen(fv), 4000);
+  await fk.locator('a[data-router] [data-testid="tweetPhoto"]').first().click();
+  await waitFor(() => viewerOpen(fk), 4000);
+  await sleep(600); // both frames report their navigation
+  await bcol('V').locator('.col-back').click();
+  await waitFor(async () => (await pathOf(fv)) === '/i/lists/777', 8000);
+  check('media viewer: back still works after another column navigated', (await pathOf(fv)) === '/i/lists/777' && !(await viewerOpen(fv)), await pathOf(fv));
+  check('media viewer: ...and leaves that other column where it was', await viewerOpen(fk) && (await pathOf(fk)) === '/bob/status/1001/photo/1', await pathOf(fk));
+  await bcol('K').locator('.col-back').click();
+  await waitFor(async () => !(await viewerOpen(fk)), 5000);
+  check('media viewer: that column\'s own back then closes its viewer', (await pathOf(fk)) === '/i/bookmarks', await pathOf(fk));
+  // Reading pane: a picture opened from the post shown there, then back, shows that post again.
+  await fk.locator('article').nth(1).locator('[data-testid="tweetText"]').first().click();
+  const rf = await waitFor(async () => { const hnd = await bp.locator('#reader iframe').elementHandle(); const f = hnd && await hnd.contentFrame(); return f && (await f.evaluate(() => /\/status\/\d+$/.test(location.pathname) && document.documentElement.classList.contains('xdeck-frame'))) ? f : null; }, 10000);
+  const postPath = await pathOf(rf);
+  await rf.locator('a[data-router] [data-testid="tweetPhoto"]').first().click();
+  await waitFor(() => viewerOpen(rf), 4000);
+  check('reading pane: a picture opens the viewer over the post', await viewerOpen(rf) && /\/photo\/1$/.test(await pathOf(rf)), await pathOf(rf));
+  await bp.locator('#reader .icon-btn[aria-label="Back"]').click();
+  await waitFor(async () => !(await viewerOpen(rf)), 5000);
+  check('reading pane: back returns to the post', (await pathOf(rf)) === postPath && !(await viewerOpen(rf)), `${postPath} -> ${await pathOf(rf)}`);
+  check('reading pane: the columns did not move', (await pathOf(fv)) === '/i/lists/777' && (await pathOf(fk)) === '/i/bookmarks');
+  await bp.close();
+
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {
   check('test run completed without exceptions', false, err.stack || String(err));

@@ -37,6 +37,10 @@ XDeck is an independent, unofficial project and is not affiliated with X Corp.
 - An in-column script adds what X lacks: filters, unread tracking, alerts, the save-to-collection
   button and click-to-reading-pane. Everything XDeck stores stays in `chrome.storage.local` on your
   machine. Nothing is sent anywhere else.
+- That script gets its column's settings (filters, refresh mode, title) from extension storage,
+  which scripts running on x.com cannot read, not from page messages. Each frame also holds a
+  random token that every message it sends the deck must carry, so a script inside a column can
+  neither see your filter settings nor forge messages to the deck.
 - One deck at a time: opening the deck in a second tab pauses the first (with a "Use this tab"
   button), so two decks never overwrite each other's workspaces.
 
@@ -112,7 +116,10 @@ Collections > Import for saved posts.
     columns, 2 rows up to 8, then 3), or pick 1 to 4 rows. A single row of four would look the same
     as Columns, which is why Auto adds rows.
   - **Tabs:** one large column at a time, good on a laptop.
-- Drag column headers to reorder. Reordering and switching layouts never reload columns.
+- Drag column headers to reorder. Reordering and switching layouts never reload columns. Tab and
+  Shift+Tab move through columns in the order you see them.
+- A column's back arrow returns to the previous page in place: a picture or video viewer closes
+  over the timeline where you were, in columns and in the reading pane.
 - **Reading pane**: when it's on, clicking a post opens the thread on the right while the column
   keeps its scroll position. The pane is resizable.
 - **Composer** panel (Alt+N) uses X's own composer, including media, polls and scheduling.
