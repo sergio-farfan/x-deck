@@ -556,7 +556,12 @@ try {
   check('single deck: the older deck tab pauses when another opens', paused === 1);
   check('single deck: the paused tab unloads its columns', await page.locator('.col').count() === 0);
   check('single deck: the new tab is live', await second.locator('.col').count() === 4);
+  await page.keyboard.press('Alt+BracketRight');
+  await sleep(500);
+  check('single deck: a paused tab ignores workspace shortcuts', await page.locator('.col').count() === 0 && await page.locator('body.superseded').count() === 1);
   await second.close();
+  const resumed = await waitFor(async () => (await page.locator('.col').count()) === 4 && (await page.locator('#banner:not([hidden])').count()) === 0, 20000);
+  check('single deck: the paused tab resumes when the live deck closes', !!resumed);
 
   // ------------------------------------------------------------------
   // Phase 3: timed auto refresh, per column and per workspace

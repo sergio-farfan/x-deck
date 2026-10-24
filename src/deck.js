@@ -577,6 +577,7 @@ function scheduleBadges() {
 }
 
 function updateBadges() {
+  if (app.superseded) return;
   const perWs = new Map();
   let total = 0;
   for (const v of app.views.values()) {
@@ -788,6 +789,7 @@ function ensureWsEl(ws) {
 }
 
 function renderWorkspace(ws) {
+  if (app.superseded) return;
   const rec = ensureWsEl(ws);
   const ids = new Set(ws.columns.map((c) => c.id));
   for (const [id, v] of app.views) {
@@ -865,6 +867,7 @@ function destroyWorkspaceEl(wsId) {
 }
 
 function showWorkspace(id) {
+  if (app.superseded) return;
   app.activeId = app.workspaces.some((w) => w.id === id) ? id : app.workspaces[0].id;
   for (const ws of app.workspaces) {
     if (ws.id === app.activeId) {
@@ -925,6 +928,7 @@ function focusColumnIndex(i) {
 // ---------- column operations ----------
 
 function addColumn(col, { focus = true } = {}) {
+  if (app.superseded) return null;
   const ws = activeWs();
   const c = normalizeColumn(col);
   ws.columns.push(c);
@@ -1426,6 +1430,7 @@ function renderTopbar() {
 // ---------- keyboard ----------
 
 function handleKey(code) {
+  if (app.superseded) return;
   if (/^Digit[1-9]$/.test(code)) { focusColumnIndex(Number(code.slice(5)) - 1); return; }
   switch (code) {
     case 'KeyN': composer.open(); break;
@@ -1512,13 +1517,17 @@ function supersede() {
   clear($composer);
   $composer.hidden = true;
   app.collections.close();
-  showBanner('XDeck is open in another tab, so this one is paused (two decks would overwrite each other).', {
+  document.body.classList.add('superseded'); // the rail, top bar and stage go inert (see deck.css)
+  showBanner('XDeck is open in another tab, so this one is paused (two decks would overwrite each other). It resumes by itself when that tab closes.', {
     label: 'Use this tab', onClick: () => location.reload(),
   });
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (sender.id === chrome.runtime.id && !sender.tab && msg && msg.type === 'deckSuperseded') supersede();
+  if (sender.id !== chrome.runtime.id || sender.tab || !msg) return;
+  if (msg.type === 'deckSuperseded') supersede();
+  // The live deck went away: take over again (a reload registers this tab and its header rule).
+  else if (msg.type === 'deckResume' && app.superseded) location.reload();
 });
 
 function extensionAlive() {

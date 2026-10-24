@@ -14,8 +14,19 @@ const X_PATTERNS = ['https://x.com/*', 'https://twitter.com/*'];
 
 // ---------- deck tab ----------
 
-async function openDeck() {
-  const [tab] = await chrome.tabs.query({ url: `${DECK_URL}*` });
+// One call at a time: two quick triggers (a double-click on the icon, a notification
+// click plus a menu action) must not both see "no deck" and open two.
+let opening = null;
+function openDeck() {
+  if (!opening) opening = openDeckNow().finally(() => { opening = null; });
+  return opening;
+}
+
+async function openDeckNow() {
+  const tabs = await chrome.tabs.query({ url: `${DECK_URL}*` });
+  // Prefer the live deck: with several deck tabs the first one found can be a paused one.
+  const claimed = await deckTabs();
+  const tab = tabs.find((t) => claimed.has(t.id)) || tabs[0];
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
@@ -90,6 +101,9 @@ function releaseDeck(tabId) {
     await setDeckTabs(ids);
     await setFrameRule(null);
     chrome.action.setBadgeText({ text: '' });
+    // A deck tab that was paused because this one was live has nothing left to wait for.
+    const others = (await chrome.tabs.query({ url: `${DECK_URL}*` })).filter((t) => t.id !== tabId);
+    if (others.length) chrome.tabs.sendMessage(others[0].id, { type: 'deckResume' }, { frameId: 0 }).catch(() => {});
   });
 }
 
@@ -163,11 +177,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       );
       return true;
     case 'notify':
-      notify(msg);
+    case 'badge': {
+      // Only the live deck may raise notifications or set the badge; a paused tab must not.
+      const tabId = sender.tab && sender.tab.id;
+      deckTabs().then((ids) => {
+        if (!ids.has(tabId)) return;
+        if (msg.type === 'notify') notify(msg); else setBadge(msg.count | 0);
+      });
       break;
-    case 'badge':
-      setBadge(msg.count | 0);
-      break;
+    }
     default:
       break;
   }

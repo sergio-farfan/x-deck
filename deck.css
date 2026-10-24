@@ -655,3 +655,8 @@ kbd {
 .refresh-row.refresh-all { padding-bottom: 12px; margin-bottom: 4px; border-bottom: 2px solid var(--line); }
 .refresh-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 900px) { .refresh-row { grid-template-columns: 1fr; } }
+
+/* A paused deck (another tab is the live one) keeps only its banner usable. */
+body.superseded .rail,
+body.superseded .topbar,
+body.superseded .stage { pointer-events: none; opacity: .45; }
