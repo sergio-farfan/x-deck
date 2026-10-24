@@ -93,6 +93,10 @@ function pathOf(url) {
   try { return new URL(url).pathname.replace(/\/+$/, '') || '/'; } catch { return ''; }
 }
 
+// Only called once a boot hop has really delivered the page (see confirmHop):
+// a failed load is not proof that X refuses the path (offline, header rule not
+// active, ad blocker), and a wrong entry would send that path through the hop
+// for good.
 function rememberBootPath(path) {
   if (!path || app.bootPaths.has(path)) return;
   app.bootPaths.add(path);
@@ -107,12 +111,14 @@ class FrameLoader {
     this.target = '';
     this.requested = '';
     this.retried = false;
+    this.trial = ''; // path whose direct load failed and is now being tried through the boot hop
     iframe.addEventListener('load', () => this.check());
   }
 
   go(url) {
     this.target = url;
     this.retried = false;
+    this.trial = '';
     this.requested = app.bootPaths.has(pathOf(url)) ? bootUrl(url) : url;
     setFrameSrc(this.iframe, this.requested);
   }
@@ -129,7 +135,7 @@ class FrameLoader {
     if (href === 'about:blank') return;
     if (href.startsWith('https://x.com/')) { this.retried = false; this.onReady(href); return; }
     if (!isBootUrl(this.requested)) {
-      rememberBootPath(pathOf(this.target));
+      this.trial = pathOf(this.target);
       this.requested = bootUrl(this.target);
       setFrameSrc(this.iframe, this.requested);
     } else if (!this.retried) {
@@ -140,6 +146,14 @@ class FrameLoader {
     }
   }
 }
+
+// Called with the frame's reported location. When a boot hop that followed a
+// failed direct load delivers the real page, that path is known to need the hop.
+FrameLoader.prototype.confirmHop = function confirmHop(href) {
+  if (!this.trial || !isBootUrl(this.requested) || isBootUrl(href)) return;
+  if (pathOf(href) === this.trial) rememberBootPath(this.trial);
+  this.trial = '';
+};
 
 function samePage(href, url) {
   try {
@@ -385,7 +399,7 @@ class ColumnView {
       case 'nav':
         this.href = String(m.href || '');
         this.backBtn.hidden = samePage(this.href, this.url) || isBootUrl(this.href);
-        if (!isBootUrl(this.href)) this.showReady();
+        if (!isBootUrl(this.href)) { this.loader.confirmHop(this.href); this.showReady(); }
         break;
       case 'navFailed': this.loader.go(safeXUrl(m.url) || this.url); break;
       case 'reloadRequest': this.reloadQuietly(); break;
@@ -510,11 +524,16 @@ const reader = {
   loaded: false,
   ready: false,     // the frame's content script has said hello
   pending: null,    // URL requested while the first page was still loading
+  requestedAt: 0,   // when the current page load was started
   href: '',
   build() {
     this.iframe = h('iframe', { title: 'Reading pane', allow: IFRAME_ALLOW });
     this.loader = new FrameLoader(this.iframe, {
-      onRefused: (url) => toast('X would not show that page here', 4000, { label: 'Open in new tab', onClick: () => window.open(url, '_blank', 'noopener') }),
+      // A refused load never says hello; reset so the next open() loads again.
+      onRefused: (url) => {
+        this.loaded = false; this.ready = false; this.pending = null;
+        toast('X would not show that page here', 4000, { label: 'Open in new tab', onClick: () => window.open(url, '_blank', 'noopener') });
+      },
     });
     this.openTab = h('a', { class: 'icon-btn', target: '_blank', rel: 'noopener', title: 'Open in a new tab', 'aria-label': 'Open in a new tab', href: 'https://x.com/' }, icon('external', 18));
     const handle = h('div', { class: 'reader-resize', title: 'Drag to resize' });
@@ -536,9 +555,18 @@ const reader = {
     if (!this.iframe) this.build();
     $reader.hidden = false;
     this.openTab.href = safe;
-    if (!this.loaded) { this.loaded = true; this.ready = false; this.loader.go(safe); }
+    // Not ready for more than 15 s means the first load never reported in: load again.
+    const stuck = this.loaded && !this.ready && Date.now() - this.requestedAt > 15000;
+    if (!this.loaded || stuck) { this.start(safe); }
     else if (!this.ready) this.pending = safe;
     else postTo(this.iframe, { type: 'navigate', url: safe });
+  },
+  start(url) {
+    this.loaded = true;
+    this.ready = false;
+    this.pending = null;
+    this.requestedAt = Date.now();
+    this.loader.go(url);
   },
   close() {
     $reader.hidden = true;
@@ -552,8 +580,9 @@ const reader = {
     if (m.type === 'hello' || m.type === 'nav') {
       const safe = safeXUrl(m.href);
       if (safe) { this.href = safe; this.openTab.href = safe; }
+      if (m.type === 'nav') this.loader.confirmHop(String(m.href || ''));
     }
-    if (m.type === 'navFailed') this.loader.go(safeXUrl(m.url) || this.href);
+    if (m.type === 'navFailed') { const url = safeXUrl(m.url) || this.href; if (url) this.start(url); }
     if (m.type === 'bootFailed') this.loader.onRefused(this.loader.target);
     if (m.type === 'key') handleKey(String(m.code || ''));
   },
@@ -610,6 +639,7 @@ const composer = {
   },
   onMessage(m) {
     if (m.type === 'hello') postTo(this.iframe, { type: 'config', role: 'compose', column: null });
+    if (m.type === 'nav') this.loader.confirmHop(String(m.href || ''));
     if (m.type === 'hello' || m.type === 'nav') {
       const href = String(m.href || '');
       if (href.includes('/compose/')) this.sawCompose = true;
@@ -1167,7 +1197,7 @@ function settingsDialog() {
     onReset: async () => {
       if (!(await confirmDialog('Reset all settings and workspaces to the defaults? Collections are kept.', { okLabel: 'Reset', danger: true }))) return false;
       await flushWorkspaces();
-      await chrome.storage.local.remove(['settings', 'workspaces', 'activeWorkspaceId']);
+      await chrome.storage.local.remove(['settings', 'workspaces', 'activeWorkspaceId', BOOT_KEY]);
       location.reload();
       return true;
     },
@@ -1393,6 +1423,10 @@ const aliveTimer = setInterval(() => {
 // ---------- boot ----------
 
 async function boot() {
+  // Chrome may prerender this page (a typed address it predicts). A prerendered
+  // document cannot register its tab with the service worker, so wait until it
+  // is actually shown before doing anything that loads columns.
+  if (document.prerendering) await new Promise((resolve) => document.addEventListener('prerenderingchange', resolve, { once: true }));
   const state = await loadState();
   app.settings = state.settings;
   const stored = await chrome.storage.local.get(BOOT_KEY);
@@ -1430,5 +1464,9 @@ async function boot() {
 }
 
 window.addEventListener('pagehide', () => { flushWorkspaces(); });
+
+// Restored from the back/forward cache: the service worker dropped this tab's
+// header rule when the tab left the deck, and nothing would register it again.
+window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
 
 boot();

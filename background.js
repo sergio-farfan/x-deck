@@ -144,6 +144,13 @@ function setBadge(count) {
 // ---------- messages from the deck page ----------
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // A prerendered or cached deck page must not claim the tab; tell it to wait.
+  if (msg && msg.type === 'registerDeck' && sender.id === chrome.runtime.id
+      && typeof sender.url === 'string' && sender.url.startsWith(DECK_URL)
+      && sender.documentLifecycle && sender.documentLifecycle !== 'active') {
+    sendResponse({ ok: false, error: 'not-active' });
+    return false;
+  }
   const fromDeck = sender.id === chrome.runtime.id && sender.frameId === 0
     && typeof sender.url === 'string' && sender.url.startsWith(DECK_URL);
   if (!fromDeck) return false;

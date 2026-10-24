@@ -95,6 +95,11 @@ const server = https.createServer({
     req.socket.destroy();
     return undefined;
   }
+  // /messages never loads in a frame, not even through the boot hop (like being offline).
+  if (req.headers['sec-fetch-dest'] === 'iframe' && (url.pathname === '/messages' || (url.pathname === '/i/xdk-boot' && url.searchParams.get('go') === '/messages'))) {
+    req.socket.destroy();
+    return undefined;
+  }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...X_HEADERS });
   res.end(url.pathname.startsWith('/i/xdeck') ? SHELL : timeline);
 });
@@ -181,8 +186,12 @@ try {
   check('frames: columns load although X sends X-Frame-Options DENY and frame-ancestors none', embedded, shellFrame ? shellFrame.url() : 'no frame');
   const reachedHome = shellFrame && await waitFor(() => shellFrame.url() === 'https://x.com/home', 15000);
   check('refused pages: Home column reaches /home through the boot page', reachedHome, shellFrame ? shellFrame.url() : 'no frame');
-  const remembered = await sw.evaluate(() => chrome.storage.local.get('xdeckBootPaths'));
-  check('refused pages: refused path remembered for next time', (remembered.xdeckBootPaths || []).includes('/home'), JSON.stringify(remembered));
+  // Remembered only after the hop has delivered the page (the frame's nav message), so wait for it.
+  const remembered = await waitFor(async () => {
+    const v = (await sw.evaluate(() => chrome.storage.local.get('xdeckBootPaths'))).xdeckBootPaths || [];
+    return v.includes('/home') ? v : null;
+  }, 10000);
+  check('refused pages: refused path remembered for next time', !!remembered, JSON.stringify(remembered));
   check('refused pages: no error placeholder in the column', await shell.locator('.col').first().locator('.col-error').count() === 0);
   const frameCookie = shellFrame ? await shellFrame.evaluate(() => document.cookie) : '';
   check('cookies: SameSite=Lax CSRF cookie readable in the column', /ct0=testcsrf/.test(frameCookie), frameCookie);
@@ -617,6 +626,43 @@ try {
   await gp.waitForSelector('.col');
   const g3 = await gridInfo();
   check('grid: a deliberate 1 row survives a reload (migration runs once)', g3.value === '1' && g3.rows === '1', JSON.stringify(g3));
+
+  // ------------------------------------------------------------------
+  // Phase 5: a page X refuses even through the boot hop; reading-pane recovery
+  // ------------------------------------------------------------------
+  await gp.close();
+  await sleep(600);
+  await seed({
+    settings: { lazyLoad: false },
+    workspaces: [{ id: 'wm', name: 'Msg', layout: 'columns', gridRows: 0, columns: [col('messages', {}, { title: 'Messages' }), col('bookmarks', {}, { title: 'Marks' })] }],
+    activeWorkspaceId: 'wm',
+    migrations: ['grid-auto-v1'],
+  });
+  const mp = await context.newPage();
+  watchErrors(mp);
+  await mp.goto(deckUrl, { waitUntil: 'commit' });
+  await mp.waitForSelector('.col');
+  const card = await waitFor(() => mp.locator('.col').first().locator('.col-error').textContent(), 25000);
+  check('refused everywhere: the column shows the error card with Retry', /X would not show this page in a column/.test(card || '') && await mp.locator('.col').first().locator('.col-error button', { hasText: 'Retry' }).count() === 1, String(card));
+  const rememberedMsg = (await sw.evaluate(() => chrome.storage.local.get('xdeckBootPaths'))).xdeckBootPaths || [];
+  check('refused everywhere: a failed hop is not remembered as a refused path', !rememberedMsg.includes('/messages'), JSON.stringify(rememberedMsg));
+  check('refused everywhere: other columns still load', await waitFor(async () => {
+    const hnd = await mp.locator('.col iframe').nth(1).elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && (await fr.evaluate(() => document.documentElement.classList.contains('xdeck-frame')));
+  }, 10000));
+  // Reading pane: a refused first load must not leave it dead.
+  await sw.evaluate(() => chrome.storage.local.set({ 'inbox:rp-1': { action: 'openDetail', url: 'https://x.com/messages', at: Date.now() } }));
+  await waitFor(() => mp.locator('.toast', { hasText: 'would not show that page here' }).count(), 25000);
+  await sw.evaluate(() => chrome.storage.local.set({ 'inbox:rp-2': { action: 'openDetail', url: 'https://x.com/bob/status/1001', at: Date.now() } }));
+  const readerLoaded = await waitFor(async () => {
+    const hnd = await mp.locator('#reader iframe').elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && fr.url() === 'https://x.com/bob/status/1001';
+  }, 15000);
+  check('reading pane: opens a page after a refused first load', !!readerLoaded);
+  await mp.screenshot({ path: path.join(outDir, '13-refused-card.png') });
+  await mp.close();
 
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {
