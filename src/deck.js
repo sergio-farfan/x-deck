@@ -1,7 +1,7 @@
 // XDeck deck page: workspaces, live x.com columns, layouts, reading pane,
 // composer, keyboard shortcuts, unread counters and keyword-alert relay.
 
-import { loadState, planImport, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
+import { loadState, onSaveFailure, planImport, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
 import { buildUrl, describe, makeColumn, normalizeColumn, columnFromUrl, safeXUrl, uid, WIDTHS } from './columns.js';
 import { h, icon, iconButton, append, clear, toast, popMenu, closeMenu, focusQuietly, confirmDialog, promptDialog, copyText, downloadText } from './dom.js';
 import { openColumnEditor, openSettings, openHelp, openRefreshDialog } from './dialogs.js';
@@ -31,6 +31,7 @@ const app = {
   qsearch: null,
   collections: null,
   booted: false,
+  invalidated: false,   // the extension was updated or reloaded under this deck: saving is impossible
   refreshPaused: false,  // pauses every column's auto-refresh timer (not saved)
   lastTick: 0,
   superseded: false,   // another tab opened the deck; this one is paused
@@ -52,13 +53,40 @@ function findColumn(id) {
 }
 
 function save() {
-  if (app.superseded) return;
+  if (app.superseded || app.invalidated || checkAlive()) return;
   saveWorkspaces(app.workspaces, app.activeId);
 }
 
 function persistSettings() {
-  if (app.superseded) return;
+  if (app.superseded || app.invalidated || checkAlive()) return;
   saveSettings(app.settings);
+}
+
+// The extension was updated or reloaded while this deck stayed open: its
+// storage calls now fail, so stop pretending to save and say so.
+function checkAlive() {
+  if (app.invalidated) return true;
+  let alive = false;
+  try { alive = !!chrome.runtime.id; } catch { alive = false; }
+  if (alive) return false;
+  markInvalidated();
+  return true;
+}
+
+function markInvalidated() {
+  if (app.invalidated) return;
+  app.invalidated = true;
+  cancelPendingSave();
+  showBanner('XDeck was updated or reloaded, so changes made in this tab can no longer be saved. Reload this tab to keep using it.', { label: 'Reload', onClick: () => location.reload() });
+}
+
+let lastSaveToast = 0;
+function reportSaveFailure(err) {
+  const msg = String((err && err.message) || err || '');
+  if (/context invalidated|Extension context/i.test(msg)) { markInvalidated(); return; }
+  if (Date.now() - lastSaveToast < 10000) return;
+  lastSaveToast = Date.now();
+  toast(`XDeck could not save your changes: ${msg || 'unknown error'}`, 8000);
 }
 
 // Replace a frame's document without adding an entry to the tab's joint
@@ -1417,7 +1445,7 @@ function extensionAlive() {
 const aliveTimer = setInterval(() => {
   if (extensionAlive()) return;
   clearInterval(aliveTimer);
-  showBanner('XDeck was updated or reloaded. Reload this tab to keep using it.', { label: 'Reload', onClick: () => location.reload() });
+  markInvalidated();
 }, 5000);
 
 // ---------- boot ----------
@@ -1427,6 +1455,7 @@ async function boot() {
   // document cannot register its tab with the service worker, so wait until it
   // is actually shown before doing anything that loads columns.
   if (document.prerendering) await new Promise((resolve) => document.addEventListener('prerenderingchange', resolve, { once: true }));
+  onSaveFailure(reportSaveFailure);
   const state = await loadState();
   app.settings = state.settings;
   const stored = await chrome.storage.local.get(BOOT_KEY);

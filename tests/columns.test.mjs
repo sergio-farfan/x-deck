@@ -2,7 +2,7 @@
 // Run: npm run test:columns
 
 import { SEARCH_PRESETS, NEWS_SITES, RETIRED_DEFAULT_QUERIES, buildSearchQuery, buildUrl, makeColumn } from '../src/columns.js';
-import { migrateWorkspaces, migrateGridAuto, autoGridRows, gridRowsFor, normalizeWorkspace, defaultWorkspaces, planImport, IMPORT_LIMITS, DEFAULT_SETTINGS } from '../src/store.js';
+import { migrateWorkspaces, migrateGridAuto, autoGridRows, gridRowsFor, normalizeWorkspace, defaultWorkspaces, planImport, IMPORT_LIMITS, DEFAULT_SETTINGS, saveSettings, saveWorkspaces, flushWorkspaces, onSaveFailure } from '../src/store.js';
 
 let failed = 0;
 let total = 0;
@@ -80,6 +80,23 @@ eq('import: good settings pass through', sortKeys(okSet.settings), sortKeys({ th
 const rx = planImport({ workspaces: [{ columns: [col({ filters: { include: '/foo/, bar', exclude: '/x{1,2}/i' } })] }] });
 eq('import: regex filters are counted for the confirmation', rx.summary.regexTerms, 2);
 eq('import: limits constants', [IMPORT_LIMITS.workspaces, IMPORT_LIMITS.columns, IMPORT_LIMITS.notify, IMPORT_LIMITS.bytes], [20, 50, 5, 1048576]);
+
+// ---- failed writes are reported, not swallowed ----
+const errors = [];
+onSaveFailure((e) => errors.push(e.message));
+globalThis.chrome = { storage: { local: { set: () => { throw new Error('Extension context invalidated.'); } } } };
+await saveSettings({});
+saveWorkspaces([], 'x'); await flushWorkspaces();
+eq('store: synchronous "context invalidated" is reported for settings and workspaces', errors, ['Extension context invalidated.', 'Extension context invalidated.']);
+errors.length = 0;
+globalThis.chrome = { storage: { local: { set: () => Promise.reject(new Error('QUOTA_BYTES quota exceeded')) } } };
+await saveSettings({});
+eq('store: a rejected write (quota) is reported', errors, ['QUOTA_BYTES quota exceeded']);
+errors.length = 0;
+let written = null;
+globalThis.chrome = { storage: { local: { set: (x) => { written = x; return Promise.resolve(); } } } };
+await saveSettings({ a: 1 });
+eq('store: a good write still goes through without a report', [written, errors.length], [{ settings: { a: 1 } }, 0]);
 
 console.log(`\n${total - failed}/${total} passed`);
 process.exit(failed ? 1 : 0);

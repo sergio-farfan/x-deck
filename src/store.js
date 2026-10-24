@@ -224,16 +224,32 @@ export function cancelPendingSave() {
   wsPending = null;
 }
 
+// Writes can fail: the extension was updated or reloaded under an open deck
+// ("Extension context invalidated", thrown synchronously or as a rejection),
+// or the 10 MB quota is full. The deck registers a handler so it can tell the
+// user instead of losing changes silently.
+let saveFailureHandler = () => {};
+export function onSaveFailure(fn) { saveFailureHandler = typeof fn === 'function' ? fn : () => {}; }
+
+function guardedSet(items) {
+  try {
+    return Promise.resolve(chrome.storage.local.set(items)).catch((err) => { saveFailureHandler(err); });
+  } catch (err) {
+    saveFailureHandler(err);
+    return Promise.resolve();
+  }
+}
+
 export function flushWorkspaces() {
   clearTimeout(wsTimer);
   if (!wsPending) return Promise.resolve();
   const p = wsPending;
   wsPending = null;
-  return chrome.storage.local.set(p);
+  return guardedSet(p);
 }
 
 export function saveSettings(settings) {
-  return chrome.storage.local.set({ settings });
+  return guardedSet({ settings });
 }
 
 export async function getCollections() {
