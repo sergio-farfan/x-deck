@@ -903,6 +903,43 @@ try {
   check('lazy loading: scrolling brings the rest in', !!allLoaded, `${await lz.locator('.col iframe[src]').count()} of 10`);
   await lz.close();
 
+  // ------------------------------------------------------------------
+  // Phase 9: X's virtual list keeps drawing posts while a column is scrolled
+  // (regression: a body overflow rule made <body> the scroller, X's scroll measure stayed 0,
+  // and columns went blank after the first screen)
+  // ------------------------------------------------------------------
+  await sleep(300);
+  await seed({
+    settings: { lazyLoad: false },
+    workspaces: [{ id: 'wv', name: 'Virtual', layout: 'columns', gridRows: 0, columns: [col('list', { list: '777' }, { title: 'Virtual list', refreshSec: 0 })] }],
+    activeWorkspaceId: 'wv',
+    migrations: ['grid-auto-v1'],
+  });
+  const vp = await context.newPage();
+  watchErrors(vp);
+  await vp.goto(deckUrl, { waitUntil: 'commit' });
+  await vp.waitForSelector('.col');
+  const vf = await waitFor(async () => {
+    const hnd = await vp.locator('.col iframe').first().elementHandle();
+    const fr = hnd && await hnd.contentFrame();
+    return fr && (await fr.evaluate(() => location.pathname === '/i/lists/777' && document.querySelectorAll('[data-testid="cellInnerDiv"]').length > 0)) ? fr : null;
+  }, 20000);
+  const firstCells = await vf.evaluate(() => document.querySelectorAll('[data-testid="cellInnerDiv"]').length);
+  const colBox = await vp.locator('.col').first().locator('iframe').boundingBox();
+  await vp.mouse.move(colBox.x + colBox.width / 2, colBox.y + colBox.height / 2);
+  for (let i = 0; i < 12; i++) { await vp.mouse.wheel(0, 500); await sleep(120); }
+  await sleep(600);
+  const after = await vf.evaluate(() => ({
+    xScrollY: -document.body.getBoundingClientRect().top,
+    bodyScrollTop: document.body.scrollTop,
+    maxIndex: Math.max(...[...document.querySelectorAll('[data-testid="cellInnerDiv"] [data-testid="tweetText"]')].map((t) => +t.textContent.replace(/\D/g, ''))),
+    bodyOverflow: getComputedStyle(document.body).overflow,
+  }));
+  check('virtual list: scrolling a column is seen by X (window scrolls, body does not)', after.xScrollY > 3000 && after.bodyScrollTop === 0, JSON.stringify(after));
+  check('virtual list: posts beyond the first screen are drawn while scrolling', after.maxIndex >= 25 && firstCells > 0, `first ${firstCells} cells, deepest drawn post ${after.maxIndex}`);
+  await vp.screenshot({ path: path.join(outDir, '15-virtual-scroll.png') });
+  await vp.close();
+
   check('deck page logged no errors', deckErrors.length === 0, deckErrors.slice(0, 5).join(' | '));
 } catch (err) {
   check('test run completed without exceptions', false, err.stack || String(err));

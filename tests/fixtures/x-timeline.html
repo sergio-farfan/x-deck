@@ -109,6 +109,46 @@
   </div>
 </div>
 <script nonce="xdtest">
+  // On /i/lists/777 the fixture behaves like X's real timeline: a virtual list whose cells are
+  // absolutely positioned, drawn only near the scroll position, with the position measured the
+  // way X measures it (-document.body.getBoundingClientRect().top) and listened for on window.
+  // X's shell also sets html,body{height:100%} (static) and html.style.overflowY='scroll' (runtime).
+  if (location.pathname === '/i/lists/777') {
+    const style = document.createElement('style');
+    style.textContent = 'html,body{height:100%}';
+    document.head.appendChild(style);
+    document.documentElement.style.overflowY = 'scroll';
+    const tl = document.getElementById('timeline');
+    tl.textContent = '';
+    tl.style.position = 'relative';
+    const N = 60, H = 220;
+    tl.style.minHeight = `${N * H}px`;
+    const rendered = new Map();
+    const cell = (i) => {
+      const d = document.createElement('div');
+      d.setAttribute('data-testid', 'cellInnerDiv');
+      d.style.cssText = `position:absolute;width:100%;transform:translateY(${i * H}px)`;
+      const a = document.createElement('article'); a.setAttribute('data-testid', 'tweet'); a.setAttribute('role', 'article');
+      a.innerHTML = `<div data-testid="User-Name"><a href="/v${i}"><span>Virtual ${i}</span></a><a href="/v${i}"><span>@v${i}</span></a>`
+        + `<a href="/v${i}/status/${7000 + i}"><time datetime="2026-10-${String(1 + (i % 28)).padStart(2, '0')}T10:00:00.000Z">1h</time></a></div>`
+        + `<div data-testid="tweetText" lang="en">Virtual post number ${i}</div>`
+        + `<div role="group" aria-label="1 reply, 2 reposts, ${i} likes"><button data-testid="like">${i}</button></div>`;
+      d.appendChild(a);
+      return d;
+    };
+    const update = () => {
+      const scrollY = -document.body.getBoundingClientRect().top; // X's Viewport.scrollY()
+      const top = scrollY - 800, bottom = scrollY + document.documentElement.clientHeight + 800;
+      for (let i = 0; i < N; i++) {
+        const visible = i * H + H > top && i * H < bottom;
+        if (visible && !rendered.has(i)) { const c = cell(i); rendered.set(i, c); tl.appendChild(c); }
+        else if (!visible && rendered.has(i)) { rendered.get(i).remove(); rendered.delete(i); }
+      }
+      document.documentElement.dataset.vlistScrollY = String(Math.round(scrollY));
+    };
+    window.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
+    update();
+  }
   // Tiny stand-in for X's router: its own links and popstate re-render the page.
   const render = () => { document.getElementById('route').textContent = location.pathname; };
   render();

@@ -9,7 +9,7 @@ Better TweetDeck and Control Panel for Twitter.
 
 **[Install XDeck from the Chrome Web Store](https://chromewebstore.google.com/detail/xdeck/bhbnoiglolaljelapgkljofdbcfaclcl)**
 
-Author: Sergio Farfan. Version 0.1.5 (latest GitHub release: [v0.1.3](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)). MIT licensed.
+Author: Sergio Farfan. Version 0.1.6 (latest GitHub release: [v0.1.3](https://github.com/sergio-farfan/x-deck/releases/tag/v0.1.3)). MIT licensed.
 
 XDeck is an independent, unofficial project and is not affiliated with X Corp.
 

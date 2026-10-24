@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "XDeck",
   "short_name": "XDeck",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Multi-column deck for X: live columns, layouts, filters, keyword alerts, collections and a clean reading mode.",
   "minimum_chrome_version": "116",
   "icons": {

@@ -32,8 +32,14 @@ html.xdeck-frame [data-testid="primaryColumn"] {
   border-right-width: 0 !important;
 }
 
+/* Hide horizontal overflow without making <body> a scroll container. `hidden` would:
+   X sets html{overflow-y:scroll} at runtime, which stops body's overflow from being
+   handed to the viewport, so body{overflow-x:hidden} turned the body itself into the
+   scroller. X measures scrolling as -body.getBoundingClientRect().top, which then stays
+   0, and its virtual list stops drawing posts after the first screen. `clip` creates
+   no scroll container. */
 html.xdeck-frame body {
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
 }
 
 html.xdeck-frame ::-webkit-scrollbar { width: 6px; height: 6px; }
