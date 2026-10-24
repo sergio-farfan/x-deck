@@ -4,7 +4,8 @@
 // readingPane, pauseOnHover, cleanRegularTabs) and reads/writes `collections`;
 // keep the key names in sync with it.
 
-import { makeColumn, normalizeColumn, uid, SEARCH_PRESETS, RETIRED_DEFAULT_QUERIES } from './columns.js';
+import { makeColumn, normalizeColumn, uid, WIDTHS, SEARCH_PRESETS, RETIRED_DEFAULT_QUERIES } from './columns.js';
+import { splitTerms, termsError } from './terms.js';
 
 export const DEFAULT_SETTINGS = {
   theme: 'dark',            // dark | dim | light (deck chrome; X itself follows your X display setting)
@@ -122,6 +123,74 @@ export function migrateGridAuto(workspaces) {
     }
   }
   return changed;
+}
+
+// ---------- workspace import ----------
+// A workspace file can come from anyone, so it is capped and sanitised before it
+// replaces anything: ids are regenerated (a duplicated id would merge two
+// workspaces), counts are limited, refresh intervals are clamped, only a few
+// alert columns are kept (they load immediately), and only known settings with
+// valid values are taken.
+
+export const IMPORT_LIMITS = { bytes: 1024 * 1024, workspaces: 20, columns: 50, notify: 5, minRefresh: 15, maxRefresh: 86400 };
+
+const THEMES = ['dark', 'dim', 'light'];
+
+function importSettings(raw, current) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return { settings: out, changed: [] };
+  const bool = (v) => typeof v === 'boolean';
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    const v = raw[key];
+    if (v === undefined || key === 'clean') continue;
+    let ok = false;
+    if (key === 'theme') ok = THEMES.includes(v);
+    else if (key === 'accent') ok = typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
+    else if (key === 'columnWidth') ok = typeof v === 'string' && Object.prototype.hasOwnProperty.call(WIDTHS, v);
+    else if (key === 'autoRefreshSec') ok = Number.isFinite(v) && (v === 0 || (v >= IMPORT_LIMITS.minRefresh && v <= 3600));
+    else if (key === 'readingPaneWidth') ok = Number.isFinite(v) && v >= 360 && v <= 2000;
+    else if (key === 'muteWords') ok = typeof v === 'string' && v.length <= 5000 && !termsError('Mute words', v);
+    else ok = bool(v) && bool(DEFAULT_SETTINGS[key]);
+    if (ok) out[key] = v;
+  }
+  if (raw.clean && typeof raw.clean === 'object') {
+    const clean = {};
+    for (const key of Object.keys(DEFAULT_SETTINGS.clean)) if (bool(raw.clean[key])) clean[key] = raw.clean[key];
+    if (Object.keys(clean).length) out.clean = clean;
+  }
+  const changed = Object.keys(out).filter((k) => JSON.stringify(k === 'clean' ? { ...current.clean, ...out.clean } : out[k]) !== JSON.stringify(current[k]));
+  return { settings: out, changed };
+}
+
+// Returns { workspaces, settings, summary } or throws an Error with a message for the user.
+export function planImport(data, current = DEFAULT_SETTINGS) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.workspaces) || !data.workspaces.length) {
+    throw new Error('No workspaces found in that file.');
+  }
+  const summary = { workspaces: 0, columns: 0, notify: 0, droppedNotify: 0, droppedWorkspaces: 0, droppedColumns: 0, regexTerms: 0, settingsChanged: [] };
+  let notifyLeft = IMPORT_LIMITS.notify;
+  const workspaces = [];
+  const list = data.workspaces.filter((w) => w && typeof w === 'object');
+  summary.droppedWorkspaces = Math.max(0, list.length - IMPORT_LIMITS.workspaces);
+  for (const w of list.slice(0, IMPORT_LIMITS.workspaces)) {
+    const cols = Array.isArray(w.columns) ? w.columns.filter((c) => c && typeof c === 'object') : [];
+    summary.droppedColumns += Math.max(0, cols.length - IMPORT_LIMITS.columns);
+    const columns = cols.slice(0, IMPORT_LIMITS.columns).map((c) => {
+      const col = normalizeColumn({ ...c, id: uid() });
+      if (col.refreshSec > 0) col.refreshSec = Math.min(IMPORT_LIMITS.maxRefresh, Math.max(IMPORT_LIMITS.minRefresh, col.refreshSec));
+      if (col.notify) {
+        if (notifyLeft > 0) { notifyLeft--; summary.notify++; } else { col.notify = false; summary.droppedNotify++; }
+      }
+      summary.regexTerms += [col.filters.include, col.filters.exclude].reduce((n, t) => n + splitTerms(t).filter((x) => /^\/.+\/[a-z]*$/.test(x)).length, 0);
+      return col;
+    });
+    summary.columns += columns.length;
+    workspaces.push(normalizeWorkspace({ ...w, id: uid('w'), activeColumnId: null, columns }));
+  }
+  summary.workspaces = workspaces.length;
+  const { settings, changed } = importSettings(data.settings, current);
+  summary.settingsChanged = changed;
+  return { workspaces, settings, summary };
 }
 
 export async function loadState() {

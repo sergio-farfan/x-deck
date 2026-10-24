@@ -1,7 +1,7 @@
 // XDeck deck page: workspaces, live x.com columns, layouts, reading pane,
 // composer, keyboard shortcuts, unread counters and keyword-alert relay.
 
-import { loadState, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
+import { loadState, planImport, gridRowsFor, autoGridRows, saveWorkspaces, flushWorkspaces, cancelPendingSave, saveSettings, readInbox, INBOX_PREFIX, mergeSettings, normalizeWorkspace, DEFAULT_SETTINGS, LAYOUTS } from './store.js';
 import { buildUrl, describe, makeColumn, normalizeColumn, columnFromUrl, safeXUrl, uid, WIDTHS } from './columns.js';
 import { h, icon, iconButton, append, clear, toast, popMenu, closeMenu, focusQuietly, confirmDialog, promptDialog, copyText, downloadText } from './dom.js';
 import { openColumnEditor, openSettings, openHelp, openRefreshDialog } from './dialogs.js';
@@ -1116,6 +1116,45 @@ function applyTheme() {
   document.documentElement.style.setProperty('--accent', /^#[0-9a-f]{6}$/i.test(s.accent) ? s.accent : DEFAULT_SETTINGS.accent);
 }
 
+function describeImport(plan, replacing) {
+  const s = plan.summary;
+  const parts = [
+    `Replace your ${replacing} workspace${replacing === 1 ? '' : 's'} with ${s.workspaces} from this file (${s.columns} column${s.columns === 1 ? '' : 's'})?`,
+  ];
+  if (s.settingsChanged.length) parts.push(`It also changes these settings: ${s.settingsChanged.join(', ')}.`);
+  if (s.notify) parts.push(`${s.notify} column${s.notify === 1 ? '' : 's'} will send desktop alerts.`);
+  if (s.regexTerms) parts.push(`${s.regexTerms} filter${s.regexTerms === 1 ? '' : 's'} use regular expressions.`);
+  const dropped = [];
+  if (s.droppedWorkspaces) dropped.push(`${s.droppedWorkspaces} workspace${s.droppedWorkspaces === 1 ? '' : 's'}`);
+  if (s.droppedColumns) dropped.push(`${s.droppedColumns} column${s.droppedColumns === 1 ? '' : 's'}`);
+  if (s.droppedNotify) dropped.push(`alerts on ${s.droppedNotify} column${s.droppedNotify === 1 ? '' : 's'}`);
+  if (dropped.length) parts.push(`Over the limits, not imported: ${dropped.join(', ')}.`);
+  parts.push('You can undo this right afterwards.');
+  return parts.join(' ');
+}
+
+// Returns true when the import was applied (the settings dialog then closes).
+async function importWorkspaces(data) {
+  const plan = planImport(data, app.settings); // throws with a message for the user
+  if (!(await confirmDialog(describeImport(plan, app.workspaces.length), { okLabel: 'Replace' }))) return false;
+  const before = { workspaces: app.workspaces, settings: app.settings, activeId: app.activeId };
+  for (const id of [...app.wsEls.keys()]) destroyWorkspaceEl(id);
+  app.workspaces = plan.workspaces;
+  applySettings({ ...app.settings, ...plan.settings, clean: { ...app.settings.clean, ...(plan.settings.clean || {}) } });
+  showWorkspace(app.workspaces[0].id);
+  toast(`Imported ${app.workspaces.length} workspace${app.workspaces.length === 1 ? '' : 's'}`, 12000, {
+    label: 'Undo',
+    onClick: () => {
+      for (const id of [...app.wsEls.keys()]) destroyWorkspaceEl(id);
+      app.workspaces = before.workspaces;
+      applySettings(before.settings);
+      showWorkspace(app.workspaces.some((w) => w.id === before.activeId) ? before.activeId : app.workspaces[0].id);
+      toast('Import undone');
+    },
+  });
+  return true;
+}
+
 function settingsDialog() {
   openSettings({
     settings: app.settings,
@@ -1124,18 +1163,7 @@ function settingsDialog() {
       const data = { app: 'XDeck', version: 1, exportedAt: new Date().toISOString(), settings: app.settings, workspaces: app.workspaces };
       downloadText(`xdeck-workspaces-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json');
     },
-    onImport: (data) => {
-      if (!data || !Array.isArray(data.workspaces) || !data.workspaces.length) throw new Error('No workspaces found in that file.');
-      const imported = data.workspaces.map((w) => normalizeWorkspace({
-        ...w,
-        columns: (Array.isArray(w.columns) ? w.columns : []).map((c) => normalizeColumn({ ...c, id: uid() })),
-      }));
-      for (const id of [...app.wsEls.keys()]) destroyWorkspaceEl(id);
-      app.workspaces = imported;
-      if (data.settings && typeof data.settings === 'object') applySettings({ ...app.settings, ...data.settings });
-      showWorkspace(app.workspaces[0].id);
-      toast(`Imported ${app.workspaces.length} workspaces`);
-    },
+    onImport: importWorkspaces,
     onReset: async () => {
       if (!(await confirmDialog('Reset all settings and workspaces to the defaults? Collections are kept.', { okLabel: 'Reset', danger: true }))) return false;
       await flushWorkspaces();

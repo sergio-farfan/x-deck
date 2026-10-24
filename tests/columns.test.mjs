@@ -2,7 +2,7 @@
 // Run: npm run test:columns
 
 import { SEARCH_PRESETS, NEWS_SITES, RETIRED_DEFAULT_QUERIES, buildSearchQuery, buildUrl, makeColumn } from '../src/columns.js';
-import { migrateWorkspaces, migrateGridAuto, autoGridRows, gridRowsFor, normalizeWorkspace, defaultWorkspaces } from '../src/store.js';
+import { migrateWorkspaces, migrateGridAuto, autoGridRows, gridRowsFor, normalizeWorkspace, defaultWorkspaces, planImport, IMPORT_LIMITS, DEFAULT_SETTINGS } from '../src/store.js';
 
 let failed = 0;
 let total = 0;
@@ -51,6 +51,35 @@ const w2 = { ...shipped(), columns: [{ title: 'Breaking' }, {}, {}] };
 const w3 = { ...shipped(), name: 'My news' };
 const w4 = { ...shipped(), gridRows: 2 };
 eq('grid migration: customised workspaces are left alone', [migrateGridAuto([w2, w3, w4]), w2.gridRows, w3.gridRows, w4.gridRows], [false, 1, 1, 2]);
+
+// ---- workspace import (untrusted file) ----
+const col = (extra = {}) => ({ type: 'home', params: {}, filters: {}, ...extra });
+const throwsMsg = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+eq('import: no workspaces is refused', [throwsMsg(() => planImport({})), throwsMsg(() => planImport({ workspaces: [] })), throwsMsg(() => planImport(null))].every((m) => /No workspaces/.test(m)), true);
+const dup = planImport({ workspaces: [{ id: 'same', name: 'A', columns: [col()] }, { id: 'same', name: 'B', columns: [col()] }] });
+eq('import: duplicate workspace ids are regenerated', [dup.workspaces[0].id !== dup.workspaces[1].id, dup.workspaces.every((w) => w.id !== 'same')], [true, true]);
+const many = planImport({ workspaces: Array.from({ length: 30 }, (_, i) => ({ name: `W${i}`, columns: Array.from({ length: 80 }, () => col()) })) });
+eq('import: workspace and column counts are capped and reported', [many.workspaces.length, many.workspaces[0].columns.length, many.summary.droppedWorkspaces, many.summary.droppedColumns], [20, 50, 10, 20 * 30]);
+const alerts = planImport({ workspaces: [{ name: 'A', columns: Array.from({ length: 9 }, () => col({ notify: true, refreshSec: 15, refreshMode: 'reload' })) }] });
+eq('import: only a few alert columns are kept', [alerts.workspaces[0].columns.filter((c) => c.notify).length, alerts.summary.notify, alerts.summary.droppedNotify], [5, 5, 4]);
+const clamp = planImport({ workspaces: [{ name: 'A', columns: [col({ refreshSec: 1 }), col({ refreshSec: 0 }), col({ refreshSec: 99999999 }), col({ refreshSec: 45 })] }] });
+eq('import: refresh intervals are clamped (0 stays off)', clamp.workspaces[0].columns.map((c) => c.refreshSec), [15, 0, 86400, 45]);
+const junk = planImport({ workspaces: [null, 'x', { name: 'Ok', columns: [null, 5, col()] }] });
+eq('import: junk entries are skipped', [junk.workspaces.length, junk.workspaces[0].columns.length], [1, 1]);
+const st = planImport({ workspaces: [{ columns: [col()] }], settings: {
+  theme: 'neon', accent: 'red', columnWidth: 'constructor', autoRefreshSec: 5, readingPaneWidth: 5000, muteWords: '/(a+)+$/',
+  evil: true, __proto__: { polluted: 1 }, cleanRegularTabs: true, showUnread: false, pauseOnHover: 'yes',
+  clean: { hidePromoted: false, hideViews: 'x', notAnOption: true },
+} }, DEFAULT_SETTINGS);
+eq('import: invalid settings values and unknown keys are dropped', Object.keys(st.settings).sort(), ['clean', 'cleanRegularTabs', 'showUnread']);
+eq('import: valid settings are kept and changes are listed', [st.settings.cleanRegularTabs, st.settings.showUnread, st.settings.clean, st.summary.settingsChanged.sort()], [true, false, { hidePromoted: false }, ['clean', 'cleanRegularTabs', 'showUnread']]);
+eq('import: prototype pollution has no effect', ({}).polluted, undefined);
+const okSet = planImport({ workspaces: [{ columns: [col()] }], settings: { theme: 'light', accent: '#A100FF', columnWidth: 'wide', autoRefreshSec: 120, muteWords: 'spoiler, /a{1,3}/', readingPaneWidth: 640 } }, DEFAULT_SETTINGS);
+const sortKeys = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+eq('import: good settings pass through', sortKeys(okSet.settings), sortKeys({ theme: 'light', accent: '#A100FF', columnWidth: 'wide', autoRefreshSec: 120, muteWords: 'spoiler, /a{1,3}/', readingPaneWidth: 640 }));
+const rx = planImport({ workspaces: [{ columns: [col({ filters: { include: '/foo/, bar', exclude: '/x{1,2}/i' } })] }] });
+eq('import: regex filters are counted for the confirmation', rx.summary.regexTerms, 2);
+eq('import: limits constants', [IMPORT_LIMITS.workspaces, IMPORT_LIMITS.columns, IMPORT_LIMITS.notify, IMPORT_LIMITS.bytes], [20, 50, 5, 1048576]);
 
 console.log(`\n${total - failed}/${total} passed`);
 process.exit(failed ? 1 : 0);

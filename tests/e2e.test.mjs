@@ -430,6 +430,28 @@ try {
   await muteBox.blur();
   await page.locator('dialog[open] select').first().selectOption('dark');
   await page.locator('dialog[open] .btn-primary', { hasText: 'Done' }).click();
+  // Workspace import: confirmation first, then undo.
+  const wsBefore = (await sw.evaluate(() => chrome.storage.local.get('workspaces'))).workspaces.length;
+  await page.locator('.rail-btn[aria-label="Settings"]').click();
+  await page.waitForSelector('dialog[open]');
+  const importJson = JSON.stringify({ workspaces: [{ id: 'dupe', name: 'Imported A', columns: [{ type: 'bookmarks', params: {}, notify: true, refreshSec: 1 }] }, { id: 'dupe', name: 'Imported B', columns: [] }], settings: { cleanRegularTabs: true, theme: 'neon' } });
+  await page.locator('dialog[open] input[type="file"]').setInputFiles({ name: 'ws.json', mimeType: 'application/json', buffer: Buffer.from(importJson) });
+  await page.waitForSelector('dialog[open] .dlg-body p:has-text("Replace your")');
+  const importText = await page.locator('dialog[open] .dlg-body p', { hasText: 'Replace your' }).textContent();
+  check('import: confirmation names counts, changed settings and alerts', /with 2 from this file \(1 column\)/.test(importText) && /cleanRegularTabs/.test(importText) && /1 column will send desktop alerts/.test(importText) && !/theme/.test(importText), importText);
+  await page.locator('dialog[open] .btn', { hasText: 'Cancel' }).last().click();
+  await sleep(300);
+  check('import: cancelling the confirmation changes nothing', (await sw.evaluate(() => chrome.storage.local.get('workspaces'))).workspaces.length === wsBefore);
+  await page.locator('dialog[open] input[type="file"]').setInputFiles({ name: 'ws.json', mimeType: 'application/json', buffer: Buffer.from(importJson) });
+  await page.waitForSelector('dialog[open] .dlg-body p:has-text("Replace your")');
+  await page.locator('dialog[open] .btn-primary', { hasText: 'Replace' }).click();
+  await waitFor(() => page.locator('.ws-tab', { hasText: 'Imported A' }).count(), 5000);
+  const imported = (await waitFor(async () => { const w = (await sw.evaluate(() => chrome.storage.local.get('workspaces'))).workspaces; return w.some((x) => x.name === 'Imported A') ? w : null; }, 5000)) || [];
+  check('import: replaced with regenerated ids, clamped refresh', imported.length === 2 && imported[0].id !== imported[1].id && imported[0].id !== 'dupe' && imported[0].columns[0].refreshSec === 15, JSON.stringify(imported.map((w) => w.id)));
+  await page.locator('.toast-action', { hasText: 'Undo' }).click();
+  await waitFor(async () => (await sw.evaluate(() => chrome.storage.local.get('workspaces'))).workspaces.length === wsBefore, 5000);
+  check('import: Undo restores the previous workspaces and settings', (await sw.evaluate(() => chrome.storage.local.get('workspaces'))).workspaces.length === wsBefore && !(((await sw.evaluate(() => chrome.storage.local.get('settings'))).settings || {}).cleanRegularTabs));
+  await page.keyboard.press('Escape');
   await page.keyboard.press('?');
   check('help: ? opens shortcuts', await page.locator('dialog[open] .keys').count() === 1);
   await page.keyboard.press('Escape');

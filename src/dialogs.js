@@ -2,6 +2,7 @@
 
 import { h, icon, openDialog, clear, toast } from './dom.js';
 import { termsError } from './terms.js';
+import { IMPORT_LIMITS } from './store.js';
 import {
   COLUMN_TYPES, TYPE_BY_ID, SEARCH_MODES, EXPLORE_TABS, SEARCH_PRESETS, DEFAULT_FILTERS,
   makeColumn, normalizeColumn, buildSearchQuery, cleanHandle, isValidHandle, safeXUrl,
@@ -382,14 +383,16 @@ export function openSettings({ settings, onChange, onExport, onImport, onReset }
   const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
   file.addEventListener('change', async () => {
     const f = file.files && file.files[0];
+    file.value = '';
     if (!f) return;
     try {
-      onImport(JSON.parse(await f.text()));
-      close();
+      if (f.size > IMPORT_LIMITS.bytes) throw new Error('that file is larger than 1 MB.');
+      let data;
+      try { data = JSON.parse(await f.text()); } catch { throw new Error('that file is not valid JSON.'); }
+      if (await onImport(data)) close();
     } catch (err) {
-      toast(`Import failed: ${err.message}`, 5000);
+      toast(`Import failed: ${err.message}`, 6000);
     }
-    file.value = '';
   });
 
   const body = h('div', { class: 'settings' },
