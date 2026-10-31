@@ -61,6 +61,12 @@ Store: https://chromewebstore.google.com/detail/xdeck/bhbnoiglolaljelapgkljofdbc
 Code: https://github.com/sergio-farfan/x-deck
 Write-up: https://dev.to/sergio_farfn_b071cafc7ed/xdeck-tweetdeck-style-columns-for-x-free-and-open-source-37f7
 
+## Reply with the write-up (posted as a reply to the single post)
+
+The write-up, a 4-minute read: what you get, how a Chrome extension shows X in columns without X's API, and the honest limits.
+
+https://dev.to/sergio_farfn_b071cafc7ed/xdeck-tweetdeck-style-columns-for-x-free-and-open-source-37f7
+
 ## Images
 
 Images do not count toward the character limit; attach up to four per post.
